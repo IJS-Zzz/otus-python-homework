@@ -1,0 +1,111 @@
+From 88b118c41dbccd2033016ce11b5481aebdaee4d2 Mon Sep 17 00:00:00 2001
+From: Igor Smurov <smurov_igor@mail.ru>
+Date: Mon, 21 Jan 2019 15:54:52 +0300
+Subject: [PATCH] Add new opcode LOAD_FAST_CONST
+
+---
+ Include/opcode.h        | 10 +++++++---
+ Lib/opcode.py           |  2 ++
+ Python/ceval.c          | 17 +++++++++++++++++
+ Python/opcode_targets.h |  2 +-
+ Python/peephole.c       | 10 ++++++++++
+ 5 files changed, 37 insertions(+), 4 deletions(-)
+
+diff --git a/Include/opcode.h b/Include/opcode.h
+index 9ed548729e..dbd681340f 100644
+--- a/Include/opcode.h
++++ b/Include/opcode.h
+@@ -154,10 +154,14 @@ extern "C" {
+ #define SETUP_WITH 143
+ 
+ /* Support for opargs more than 16 bits long */
+-#define EXTENDED_ARG  145
++#define EXTENDED_ARG        145
+ 
+-#define SET_ADD         146
+-#define MAP_ADD         147
++#define SET_ADD             146
++#define MAP_ADD             147
++
++/* Join two opcode in one:
++   (LOAD_FAST with args '0' and LOAD_CONST in LOAD_FAST_CONST) */
++#define LOAD_FAST_CONST     148
+ 
+ 
+ enum cmp_op {PyCmp_LT=Py_LT, PyCmp_LE=Py_LE, PyCmp_EQ=Py_EQ, PyCmp_NE=Py_NE, PyCmp_GT=Py_GT, PyCmp_GE=Py_GE,
+diff --git a/Lib/opcode.py b/Lib/opcode.py
+index e403365b6a..88f586d194 100644
+--- a/Lib/opcode.py
++++ b/Lib/opcode.py
+@@ -189,4 +189,6 @@ EXTENDED_ARG = 145
+ def_op('SET_ADD', 146)
+ def_op('MAP_ADD', 147)
+ 
++def_op('LOAD_FAST_CONST', 148)
++
+ del def_op, name_op, jrel_op, jabs_op
+diff --git a/Python/ceval.c b/Python/ceval.c
+index e1140a8e40..2c464d1172 100644
+--- a/Python/ceval.c
++++ b/Python/ceval.c
+@@ -1222,6 +1222,23 @@ PyEval_EvalFrameEx(PyFrameObject *f, int throwflag)
+             FAST_DISPATCH();
+         }
+ 
++        TARGET(LOAD_FAST_CONST)
++        {
++            x = GETLOCAL(0);
++            if (x != NULL) {
++                Py_INCREF(x);
++                PUSH(x);
++                x = GETITEM(consts, oparg);
++                Py_INCREF(x);
++                PUSH(x);
++                FAST_DISPATCH();
++            }
++            format_exc_check_arg(PyExc_UnboundLocalError,
++                UNBOUNDLOCAL_ERROR_MSG,
++                PyTuple_GetItem(co->co_varnames, oparg));
++            break;
++        }
++
+         TARGET(LOAD_FAST)
+         {
+             x = GETLOCAL(oparg);
+diff --git a/Python/opcode_targets.h b/Python/opcode_targets.h
+index 95eb127a15..e17a4fd5f4 100644
+--- a/Python/opcode_targets.h
++++ b/Python/opcode_targets.h
+@@ -147,7 +147,7 @@ static void *opcode_targets[256] = {
+     &&TARGET_EXTENDED_ARG,
+     &&TARGET_SET_ADD,
+     &&TARGET_MAP_ADD,
+-    &&_unknown_opcode,
++    &&TARGET_LOAD_FAST_CONST,
+     &&_unknown_opcode,
+     &&_unknown_opcode,
+     &&_unknown_opcode,
+diff --git a/Python/peephole.c b/Python/peephole.c
+index 11f6f8861c..e68a192b5f 100644
+--- a/Python/peephole.c
++++ b/Python/peephole.c
+@@ -425,6 +425,16 @@ PyCode_Optimize(PyObject *code, PyObject* consts, PyObject *names,
+                 cumlc = 0;
+                 break;
+ 
++                /* Replace LOAD_FAST 0 LOAD_CONST x
++                   with LOAD_FAST_CONST x */
++            case LOAD_FAST:
++                j = GETARG(codestr, i);
++                if (codestr[i+3] == LOAD_CONST && j == 0) {
++                    codestr[i+3] = LOAD_FAST_CONST;
++                    memset(codestr+i, NOP, 3);
++                }
++                break;
++
+                 /* Try to fold tuples of constants (includes a case for lists
+                    which are only used for "in" and "not in" tests).
+                    Skip over BUILD_SEQN 1 UNPACK_SEQN 1.
+-- 
+2.17.2 (Apple Git-113)
+
