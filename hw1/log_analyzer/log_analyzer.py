@@ -13,12 +13,16 @@ import re
 
 import ConfigParser as configparser
 
+
 from collections import namedtuple
 from datetime import datetime
 from string import Template
+from tempfile import NamedTemporaryFile
 
 
 ##### SETTINGS #####
+
+DEFAULT_CONFIG_PATH = "./config.json"
 
 CONFIG = {
     "REPORT_SIZE": 1000,
@@ -72,6 +76,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Server's Log Analyzer")
     parser.add_argument(
         '--config',
+        nargs='?',
+        const=DEFAULT_CONFIG_PATH,
         help="Config file path. Using JSON format.")
 
     return parser.parse_args()
@@ -81,22 +87,8 @@ def load_config(config, conf_path=None):
     if not conf_path:
         return config
 
-    if os.path.isfile(conf_path):
-        with io.open(conf_path, 'rb') as file:
-            try:
-                new_conf = json.load(file, encoding='utf8')
-            except ValueError as ex:
-                logging.exception("Config file not valid!")
-                raise ex
-    else:
-        logging.error("Config file doesn't exist!")
-        raise RuntimeError('Please check your config file.')
-
-    # update config
-    for key in new_conf.keys():
-        if key in config:
-            config[key] = new_conf[key]
-
+    with io.open(conf_path, 'rb') as file:
+        config.update(json.load(file, encoding='utf8'))
     return config
 
 
@@ -112,6 +104,7 @@ def setup_logger(logging_file=None):
 
 def get_latest_log_info(files_dir):
     if not os.path.isdir(files_dir):
+        logging.info("Log directory '{}' doesn't exist".format(files_dir))
         return
 
     DateNamedFileInfo = namedtuple('DateNamedFileInfo', ['file_path', 'file_date'])
@@ -132,7 +125,8 @@ def get_latest_log_info(files_dir):
         if not latest_file_info or file_date > latest_file_info.file_date:
             latest_file_info = DateNamedFileInfo(file_path=os.path.join(files_dir,filename),
                                                  file_date=file_date)
-
+    if not latest_file_info:
+        logging.info('Ooops. No log files yet.')
     return latest_file_info
 
 
@@ -152,20 +146,20 @@ def get_log_records(file_path, errors_limit=None):
 
             yield record
 
-    errors_percent = errors / float(records) * 100
+    errors_percent = int(round(errors / float(records) * 100))
     logging.info(
         'Processed {} records. ' \
-        'Percent of errors in records is {}%.'.format(records,
-                                                      round(errors_percent, 3)))
+        'Percent of errors in records is {}%.'.format(records, errors_percent))
 
-    if errors_limit is not None and records > 0 and errors_percent > errors_limit:
+    if (errors_limit is not None
+        and records > 0
+        and errors_percent > errors_limit):
         raise RuntimeError('Errors limit exceeded.')
 
 
 def parse_log_line(log_line):
     match = LOG_LINE_FORMAT_RE.match(log_line)
     if not match:
-        logging.error('Unable to parse line: "{}"'.format(log_line.rstrip()))
         return
 
     href = match.groupdict()['href']
@@ -186,7 +180,7 @@ def get_report_data(records, report_size=None):
         total_time += time
         create_or_updare_intermediate_item(intermediate_data, href, time)
 
-    data = sorted(intermediate_data.values(), key=lambda i: i['request_avg_time'], reverse=True)
+    data = sorted(intermediate_data.values(), key=lambda i: i['request_total_time'], reverse=True)
     data = data[:report_size]
 
     return [create_result_item(item, total_records, total_time) for item in data]
@@ -266,9 +260,13 @@ def render_template(template_file_path, report_file_path, data):
 
     html_report = template.safe_substitute(table_json=json.dumps(data))
 
-    with io.open(report_file_path, 'wb') as report_file:
+    with NamedTemporaryFile(mode='w+b', dir=report_dir) as temp_file:
         html_report.encode('utf8')
-        report_file.write(html_report)
+        temp_file.write(html_report)
+        temp_file.flush()
+
+        # save output file after after completion of write temp file
+        os.link(temp_file.name, report_file_path)
 
 
 ##### MAIN #####
@@ -277,12 +275,11 @@ def main(config):
     # resolving an actual log
     latest_log_info = get_latest_log_info(config['LOG_DIR'])
     if not latest_log_info:
-        logging.info('Ooops. No log files yet.')
         return
 
     report_date_string = latest_log_info.file_date.strftime('%Y.%m.%d')
-    report_fileneme = config['REPORT_TEMPLATE_NAME'].format(report_date_string)
-    report_file_path = os.path.join(config['REPORT_DIR'], report_fileneme)
+    report_filename = config['REPORT_TEMPLATE_NAME'].format(report_date_string)
+    report_file_path = os.path.join(config['REPORT_DIR'], report_filename)
 
     if os.path.isfile(report_file_path):
         logging.info('Looks like everything is up-to-date.')

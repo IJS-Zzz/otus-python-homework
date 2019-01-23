@@ -12,8 +12,15 @@ python log_analyzer.py
 ```
 
 If you want run script with custom config file use '--config' key.
+
+Example:
+
+Run script with config in default path to file (use %path_to_module_dir%/config.json):
 ```
-cd %path_to_module_dir%
+python log_analyzer.py --config
+```
+OR use a different path to config file:
+```
 python log_analyzer.py --config %path_to_config_file%
 ```
 Where:

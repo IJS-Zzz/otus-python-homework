@@ -5,6 +5,7 @@ import os
 import unittest
 import datetime
 import logging
+import io
 
 app = __import__('log_analyzer')
 
@@ -12,15 +13,32 @@ logging.disable(logging.CRITICAL)
 
 
 class TestFindLastLog(unittest.TestCase):
-    today = datetime.date.today()
-    test_dir = './test_find_last_log-{}'.format(
-        datetime.date.today().strftime("%Y%m%d"))
-    test_dir_wrong = os.path.join(test_dir, 'wrong')
-    template_filename = 'nginx-access-ui.log-{date}{gz}'
-    last_log_filename = template_filename.format(
-                date = today.strftime("%Y%m%d"),
-                gz='.gz')
-    last_log_path = os.path.join(test_dir, last_log_filename)
+    def setUp(self):
+        self.today = datetime.date.today()
+        self.test_dir = './test_find_last_log-{}'.format(
+            datetime.date.today().strftime("%Y%m%d"))
+        self.test_dir_wrong = os.path.join(self.test_dir, 'wrong')
+        self.template_filename = 'nginx-access-ui.log-{date}{gz}'
+        self.last_log_filename = self.template_filename.format(
+            date = self.today.strftime("%Y%m%d"),
+            gz='.gz')
+        self.last_log_path = os.path.join(self.test_dir,
+                                          self.last_log_filename)
+        # create test folders
+        self.create_test_folder(self.test_dir)
+        self.create_test_folder_wrong(self.test_dir_wrong)
+        # create last log file
+        open(self.last_log_path, 'wb').close()
+
+    def tearDown(self):
+        # remove test folder wrong
+        for file in os.listdir(self.test_dir_wrong):
+            os.remove(os.path.join(self.test_dir_wrong, file))
+        os.removedirs(self.test_dir_wrong)
+
+        for file in os.listdir(self.test_dir):
+            os.remove(os.path.join(self.test_dir, file))
+        os.removedirs(self.test_dir)
 
     def create_test_folder(self, path):
         if not os.path.isdir(path):
@@ -44,22 +62,6 @@ class TestFindLastLog(unittest.TestCase):
                 date = str(i)*8,
                 gz=gz)
             open(os.path.join(path, fileneme), 'wb').close()
-
-    def setUp(self):
-        self.create_test_folder(self.test_dir)
-        self.create_test_folder_wrong(self.test_dir_wrong)
-        # create last log file
-        open(self.last_log_path, 'wb').close()
-
-    def tearDown(self):
-        # remove test folder wrong
-        for file in os.listdir(self.test_dir_wrong):
-            os.remove(os.path.join(self.test_dir_wrong, file))
-        os.removedirs(self.test_dir_wrong)
-
-        for file in os.listdir(self.test_dir):
-            os.remove(os.path.join(self.test_dir, file))
-        os.removedirs(self.test_dir)
 
     #### Tests ####
 
@@ -140,6 +142,44 @@ class TestReportData(unittest.TestCase):
         ]
         result = app.get_report_data(input_data)
         self.assertEqual(result, out_data)
+
+
+class TestRenderTemplate(unittest.TestCase):
+    def setUp(self):
+        # $table_json - place for insert
+        # in template in render_template function
+        self.template = "data is: $table_json"
+        self.template_file_path = "./test_template.txt"
+        self.report_file_path = "./test_report.txt"
+
+        with io.open(self.template_file_path, 'wb') as file:
+            file.write(self.template)
+
+    def tearDown(self):
+        os.remove(self.template_file_path)
+        os.remove(self.report_file_path)
+
+    def test_render_template_string(self):
+        data = "THIS IS SOME DATA"
+        output_data = self.template.replace('$table_json',
+                                            '"THIS IS SOME DATA"')
+        app.render_template(self.template_file_path,
+                            self.report_file_path,
+                            data)
+        with io.open(self.report_file_path, 'rb') as file:
+            output = file.read()
+            self.assertEqual(output, output_data)
+
+    def test_render_template_list(self):
+        data = [1, 2, 3, {'a':'b', 'c': 'd'}]
+        output_data = self.template.replace('$table_json',
+                                            '[1, 2, 3, {"a": "b", "c": "d"}]')
+        app.render_template(self.template_file_path,
+                            self.report_file_path,
+                            data)
+        with io.open(self.report_file_path, 'rb') as file:
+            output = file.read()
+            self.assertEqual(output, output_data)
 
 
 if __name__ == '__main__':
