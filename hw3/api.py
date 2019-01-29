@@ -408,7 +408,7 @@ class BaseRequest(object):
             try:
                 field_cls.validate(field_value)
             except ValidationError as e:
-                self._errors[field_name] = str(e)  # !!!!!!!!!!!!
+                self._errors[field_name] = str(e)
 
     def _clean(self):
         """
