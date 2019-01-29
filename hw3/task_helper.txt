@@ -1,0 +1,142 @@
+Curl Запрос:
+
+curl -X POST  -H "Content-Type: application/json" -d '{"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "55cc9ce545bcd144300fe9efc28e65d415b923ebb6be1e19d2750a2c03e80dd209a27954dca045e5bb12418e7d89b6d718a9e35af", "arguments": {"phone": "79175002040", "email": "stupnikov@otus.ru", "first_name": "Стансилав", "last_name": "Ступников", "birthday": "01.01.1990", "gender": 1}}' http://127.0.0.1:8080/method/
+
+
+Структура запроса:
+    {"account": "<имя компании партнера>",
+     "login": "<имя пользователя>",
+     "method": "<имя метода>",
+     "token": "<аутентификационный токен>",
+     "arguments": {<словарь с аргументами вызываемого метода>}}
+
+    Поля:
+        account - строка, опционально, может быть пустым
+        login - строка, обязательно, может быть пустым
+        method - строка, обязательно, может быть пустым
+        token - строка, обязательно, может быть пустым
+        arguments - словать(объект в терминах json), обязательно, может быть пустым
+
+Валидация:
+    Запрос валиден, усли валидны все поля по отдельности
+
+Структура ответа:
+    OK:
+        {"code": <числовой код>, "response": {<ответ вызываемого метода>}}
+    ERROR:
+         {"code": <числовой код>, "error": {<сообщение об ошибке>}}
+
+
+Аунтификация:
+    Смотри метод check_auth в шаблоне. В случае если не пройдена, нужно возвращать:
+        {"code": 403, "error": "Forbidden"}
+
+
+Методы:
+    - online_score
+    - clients_interests
+
+Online_score:
+    Аргументы:
+        phone - строка или число, длинной 11, начинается с 7, опционально, может быть пустым
+        email - строка, в которой есть @, опционально, может быть пустым
+        first_name - строка, опционально, может быть пустым
+        last_name - строка, опционально, может быть пустым
+        birthday - дата в формате DD.MM.YYYY, с которой прошло не более 70 лет, опционально, может быть пустым
+        gender - число 0, 1 или 2, опционально, может быть пустым
+
+    Валидация аргументов:
+        Аргументы валидны, если валидны все поля про отдельности и если присутствует хоть одна пара с непустыми значениями:
+            phone-email
+            first_name-last_name
+            gender-birthday
+
+    Контекст(Context):
+        В словарь контекста должна прописываться запись "has" - список полей, которые были не пустыми для данного запроса
+
+    Ответ:
+        В ответ выдается число, полученное вызовом функции get_score (см. scoring.py). Но если пользователь админ (см. check_auth), то нудно всегда отдавать 42.
+             {"score": <число>}
+
+        или если запрос пришел от пользователя admin
+            {"score": 42}
+
+        или если произошла ошибка валидации
+            {"code": 422, "error": "<сообщение о том какое поле(я) невалидно(ы)>"}
+
+    Пример:
+        Запрос:
+            curl -X POST  -H "Content-Type: application/json" -d '{"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "55cc9ce545bcd144300fe9efc28e65d415b923ebb6be1e19d2750a2c03e80dd209a27954dca045e5bb12418e7d89b6d718a9e35af34e14e1d5bcd5a08f21fc95", "arguments": {"phone": "79175002040", "email": "stupnikov@otus.ru", "first_name": "Стансилав", "last_name": "Ступников", "birthday": "01.01.1990", "gender": 1}}' http://127.0.0.1:8080/method/
+
+        Данные:
+            {"account": "horns&hoofs",
+             "login": "h&f",
+             "method": "online_score",
+             "token": "55cc9ce545bcd144300fe9efc28e65d415b923ebb6be1e19d2750a2c03e80dd209a27954dca045e5bb12418e7d89b6d718a9e35af34e14e1d5bcd5a08f21fc95",
+             "arguments": {
+                "phone": "79175002040",
+                "email": "stupnikov@otus.ru",
+                "first_name": "Стансилав",
+                "last_name": "Ступников",
+                "birthday": "01.01.1990",
+                "gender": 1
+             }}
+        Ответ:
+            {"code": 200, "response": {"score": 5.0}}
+
+
+Сlients_interests:
+    Аргументы:
+        client_ids - массив чисел, обязательно, не пустое
+        date - дата в формате DD.MM.YYYY, опционально, может быть пустым
+
+    Валидация аргументов:
+        Аргументы валидны, если валидны все поля про отдельности.
+
+    Контекст(Context):
+        В словарь контекста должна прописываться запись "nclients" - количество id'шников, переданных в запросе
+
+    Ответ:
+        В ответ выдается словарь <id клиента>:<список интересов>. Список генерировать вызовом функции get_interests (см. scoring.py)
+            {"client_id1": ["interest1", "interest2" ...], "client2": [...] ...}
+        или если произошла ошибка валидации
+             {"code": 422, "error": "<сообщение о том какое поле(я) невалидно(ы)>"}
+
+    Пример:
+        Запрос:
+            curl -X POST  -H "Content-Type: application/json" -d '{"account": "horns&hoofs", "login": "admin", "method": "clients_interests", "token": "43b2c3f66f197010dd5e3ee251fcecd47fa1da6a30554d8a54d066cfff6a786f4d56018ca70160556373d0bf47c91a60e30a59e7a0ad6ee148cfcc25a6fc1b06", "arguments": {"client_ids": [1,2,3,4], "date": "20.07.2017"}}' http://127.0.0.1:8080/method/
+        Данные:
+            {"account": "horns&hoofs",
+             "login": "admin",
+             "method": "clients_interests",
+             "token": "43b2c3f66f197010dd5e3ee251fcecd47fa1da6a30554d8a54d066cfff6a786f4d56018ca70160556373d0bf47c91a60e30a59e7a0ad6ee148cfcc25a6fc1b06",
+             "arguments": {
+                "client_ids": [1,2,3,4],
+                "date": "20.07.2017"
+             }}
+        Ответ:
+             {"code": 200, "response": {"1": ["books", "hi-tech"], "2": ["pets", "tv"], "3": ["travel", "music"], "4": ["cinema", "geek"]}}
+
+
+JSON types:
+    a string:
+        {"name": "John"}
+
+    a number:
+        {"age": 30}
+
+    an object (JSON object):
+        {"employee": {"name": "John", "age": 30, "city": "New York" }}
+
+    an array:
+        {"employees":[ "John", "Anna", "Peter" ]}
+
+    a boolean:
+        { "sale":true }
+
+    null:
+        { "middlename":null }
+
+
+
+
