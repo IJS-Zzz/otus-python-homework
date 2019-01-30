@@ -6,7 +6,7 @@ and the system of validating requests to the HTTP service API scoring.
 Python version 2.7 and above.
 
 ### How to run:
-###### Simple run:
+##### Simple run:
 Print in terminal:
 ```
 cd %path_to_module_dir%
@@ -17,7 +17,7 @@ The server runs on default port (8080).
 Where:
 * %path_to_module_dir% - path to directory with module
 
-###### Run with keys:
+##### Run with keys:
 Available keys:
 * "-p", "--port" – Run server on custom port. (arg example: %port%)
 * "-l", "--log" – Write output logs in file. (arg example: %path_to_output_logs_file%)

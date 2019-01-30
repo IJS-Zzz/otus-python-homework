@@ -64,24 +64,42 @@ class Field(object):
         self.required = required
         self.nullable = nullable
 
-    @abstractmethod
+        # does field exist in request?
+        self.is_exist = False
+
+    def is_empty(self, value):
+        return value in self.empty_values
+
+    def check_required_and_nullable(self, value):
+        # Check for required
+        if not self.is_exist and self.required:
+            raise ValidationError(self.error_messages['required'])
+
+        # Check for nullable
+        if not self.nullable and self.is_empty(value):
+            raise ValidationError(self.error_messages['nullable'])
+
     def validate(self, value):
+        self.check_required_and_nullable(value)
+        if value is not None:
+            self.field_validate(value)
+
+    @abstractmethod
+    def field_validate(self, value):
         """
             Validation logic:
             If value isn't valid - raise ValidationError('error message')
         """
         raise NotImplementedError
 
-    def is_empty(self, value):
-        return value in self.empty_values
-
+    @abstractmethod
     def clean(self, value):
         """
             Clean data with field rules
             :param  value (raw data)
             :return value (clean data)
         """
-        return value
+        raise NotImplementedError
 
 
 class CharField(Field):
@@ -95,9 +113,19 @@ class CharField(Field):
             'invalid_type': "Value type must be a string.",
         })
 
-    def validate(self, value):
+    def field_validate(self, value):
         if not isinstance(value, (str, unicode)):
             raise ValidationError(self.error_messages['invalid_type'])
+
+    def clean(self, value):
+        """ Convert value to unicode """
+        if self.is_empty(value):
+            return u''
+        if isinstance(value, unicode):
+            return value
+        if isinstance(value, str):
+            return value.decode('utf8')
+        return unicode(value)
 
 
 class ArgumentsField(Field):
@@ -111,10 +139,17 @@ class ArgumentsField(Field):
             'invalid_type': "Value type must be JSON object.",
         })
 
-    def validate(self, value):
+    def field_validate(self, value):
         if not isinstance(value, dict):
             raise ValidationError(self.error_messages['invalid_type'])
 
+    def clean(self, value):
+        """ Convert value to dict """
+        if self.is_empty(value):
+            return {}
+        if isinstance(value, dict):
+            return value
+        return dict(value)
 
 class EmailField(CharField):
     """
@@ -128,15 +163,15 @@ class EmailField(CharField):
             'invalid_value': "Value must contain @ symbol.",
         })
 
-    def validate(self, value):
-        super(EmailField, self).validate(value)
+    def field_validate(self, value):
+        super(EmailField, self).field_validate(value)
         if self.is_empty(value):
             return
         if '@' not in value:
             raise ValidationError(self.error_messages['invalid_value'])
 
 
-class PhoneField(Field):
+class PhoneField(CharField):
     """
         Phone field:
         1. type - str or int
@@ -155,7 +190,7 @@ class PhoneField(Field):
             'invalid_length': "Length of value must be 11 characters",
         })
     
-    def validate(self, value):
+    def field_validate(self, value):
         if not isinstance(value, (str, unicode, int)):
             raise ValidationError(self.error_messages['invalid_type'])
         if self.is_empty(value):
@@ -185,8 +220,8 @@ class DateField(CharField):
     def _to_date(self, value):
         return datetime.datetime.strptime(value, '%d.%m.%Y')
 
-    def validate(self, value):
-        super(DateField, self).validate(value)
+    def field_validate(self, value):
+        super(DateField, self).field_validate(value)
         if self.is_empty(value):
             return
 
@@ -197,6 +232,12 @@ class DateField(CharField):
             self._to_date(value)
         except (TypeError, ValueError):
             raise ValidationError(self.error_messages['invalid_date'])
+
+    def clean(self, value):
+        """ Convert value to datetime object or None"""
+        if self.is_empty(value):
+            return
+        return self._to_date(value)
 
 
 class BirthDayField(DateField):
@@ -216,8 +257,8 @@ class BirthDayField(DateField):
             'invalid_year': "Age must be less than 70 years.",
         })
 
-    def validate(self, value):
-        super(BirthDayField, self).validate(value)
+    def field_validate(self, value):
+        super(BirthDayField, self).field_validate(value)
         if self.is_empty(value):
             return
 
@@ -243,12 +284,19 @@ class GenderField(Field):
             'invalid_value': "Value must be 0, 1 or 2.",
         })
 
-    def validate(self, value):
+    def field_validate(self, value):
         if self.is_empty(value):
             return
 
         if value not in GENDERS:
             raise ValidationError(self.error_messages['invalid_value'])
+
+    def clean(self, value):
+        if self.is_empty(value):
+            return
+        if not isinstance(value, int):
+            return int(value)
+        return value
 
 
 class ClientIDsField(Field):
@@ -265,13 +313,18 @@ class ClientIDsField(Field):
             'invalid_value': "Type of elements of list must be a number(integer)."
         })
 
-    def validate(self, value):
+    def field_validate(self, value):
         if not isinstance(value, list):
             raise ValidationError(self.error_messages['invalid_type'])
 
         for elem in value:
             if not isinstance(elem, int):
                 raise ValidationError(self.error_messages['invalid_value'])
+
+    def clean(self, value):
+        if self.is_empty(value):
+            return []
+        return value
 
 
 ##### Requests #####
@@ -327,13 +380,10 @@ class BaseRequest(object):
         if not hasattr(self, 'error_messages'):
             self.error_messages = {}
         self.error_messages.update({
-            'required': "Field {} is required",
-            'nullable': "Field {} can't be empty",
             'unexpected': "Field {} is unexpected",
         })
 
         self.fields = copy.deepcopy(self.base_fields)
-        self.filled_fields = []
 
         self.data = {} if data is None else data
         self.cleaned_data = {}
@@ -385,26 +435,11 @@ class BaseRequest(object):
             their values.
         """
         for field_name, field_cls in self.fields.items():
-            field_is_exist = field_name in self.data
-
-            # Check for required
-            if not field_is_exist:
-                if field_cls.required:
-                    msg = self.error_messages['required'].format(field_name)
-                    self._errors[field_name] = msg
-                # If field isn't exist go to next field
-                continue
-
-            field_value = self.data.get(field_name)
-
-            # Check for nullable
-            if not field_cls.nullable:
-                if field_cls.is_empty(field_value):
-                    msg = self.error_messages['nullable'].format(field_name)
-                    self._errors[field_name] = msg
-                    continue
+            # Check that field is exist in request.
+            field_cls.is_exist = field_name in self.data
 
             # Validate field value
+            field_value = self.data.get(field_name)
             try:
                 field_cls.validate(field_value)
             except ValidationError as e:
@@ -422,11 +457,6 @@ class BaseRequest(object):
             field_value = self.data.get(field_name)
             clean_value = field_cls.clean(field_value)
             self.cleaned_data[field_name] = clean_value
-
-            # If field non-empty add it in filled_fields
-            if not field_cls.is_empty(field_value):
-                self.filled_fields.append(field_name)
-
 
     def __getattr__(self, value):
         """
@@ -522,7 +552,8 @@ class OnlineScoreRequest(BaseRequest):
         """
             Return user's score, calculated by given fields
         """
-        context["has"] = [fields_name for fields_name in self.filled_fields]
+        # context["has"] = [fields_name for fields_name in self.filled_fields]
+        context["has"] = [fields_name for fields_name, field_cls in self.fields.items() if field_cls.is_exist]
 
         if is_admin:
             result = 42
