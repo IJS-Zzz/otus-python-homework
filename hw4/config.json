@@ -1,0 +1,7 @@
+{
+    "BIND_HOST": "0.0.0.0",
+    "BIND_PORT": 80,
+    "WORKERS": 2,
+    "DOCUMENT_ROOT": "./http-test-suite",
+    "LOGGING_FILE": null
+}

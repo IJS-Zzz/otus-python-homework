@@ -1,0 +1,7 @@
+{
+    "BIND_HOST": "0.0.0.0",
+    "BIND_PORT": 8080,
+    "WORKERS": 2,
+    "DOCUMENT_ROOT": "./",
+    "LOGGING_FILE": null
+}

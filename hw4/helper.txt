@@ -1,0 +1,23 @@
+1. Отвечать 200, 403, 404 на GET и HEAD запросы
+2. Отвечать 405 на прочие запросы
+3. Отвечать следующими заголовками на успешные GET-запросы:
+    - Date
+    - Server
+    - Content-Length
+    - Content-Type
+    - Connection
+
+4. Корректный Content-Type для: .html, .css, .js, .jpg, .jpeg, .png, .gif, .swf
+5. Понимать пробелы и %XX в именах файлов
+
+
+
+нагрузочное тестирование:
+ab -n 50000 -c 100 -r http://localhost:8080/
+
+
+curl -X GET http://127.0.0.1:8080/
+
+curl -X HEAD http://127.0.0.1:8080/
+
+curl -X POST -H "Content-Type: application/json" -d '{"data": "some data"}' http://127.0.0.1:8080/
