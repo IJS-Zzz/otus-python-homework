@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import datetime
@@ -6,11 +7,12 @@ import json
 import requests
 import unittest
 
+import context_functional
 from context import api, store
 from utils import cases, MockRedisConnection
 
 
-class TestSuite(unittest.TestCase):
+class TestMethodHandler(unittest.TestCase):
     def setUp(self):
         self.context = {}
         self.headers = {}

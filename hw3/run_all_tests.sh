@@ -1,6 +1,21 @@
-# BEFORE RUNNING THIS TEST YOU HAVE TO RUN HTTP-SERVER WITH THE FOLLOWING PARAMETERS:
-# - ip-address http://127.0.0.1
-# - port 8080
+# BEFORE RUNNING THIS TEST YOU HAVE TO RUN:
+#   - Scoring Api Server
+#   - Redis Server
+#
+# AND SET IN ENVIRONMENT VARIABLE THE FOLLOWING PARAMETERS:
+#   - API_URL='<host>:<port>'
+#   - REDIS_HOST='<host>'
+#   - REDIS_PORT='<port>'
+#   - REDIS_PASSWORD='<password>'
+#
 
-# Run Python unittest in './tests/integration' folder.
+# Set in Environment Variable
+export API_URL='http://127.0.0.1:8080/method/' \
+       REDIS_HOST='localhost'
+
+# Run Python unittest in './tests/' folder.
 python -m unittest discover -v -s ./tests/
+
+# Unset from Environment Variable
+unset API_URL \
+      REDIS_HOST

@@ -15,6 +15,7 @@ If you have installed Docker you can run Redis server in docker container.
 Use next bash scripts:
 * run_redis_in_docker.sh
 * stop_redis_in_docker.sh
+
 Run docker container with Redis:
 ```
 cd %path_to_module_dir%
@@ -26,6 +27,7 @@ cd %path_to_module_dir%
 bash stop_redis_in_docker.sh
 ```
 Note: run_redis_in_docker.sh contains '-rm' running key for remove all data after stop docker container.
+
 Where:
 * %path_to_module_dir% - path to directory with module
 
@@ -93,9 +95,10 @@ curl -X POST -H "Content-Type: application/json" -d '{
 }' http://127.0.0.1:8080/method/
 ```
 
-### How to run tests:
-Available two type of tests:
+### Tests:
+Available next types of tests of tests:
 * Unit test
+* Functional test
 * Integration test
 
 #### Unit test
@@ -103,48 +106,50 @@ Tests:
 * test_fields – this script are unittest for every field class object.
 * test_requests – unittest for every requests class object.
 * test_scoring – unittest for scoring module.
-* test_functional – test different scenarios of requests
 
-Run Unit tests:
-```
-cd %path_to_module_dir%
-bash run_tests_unit.sh
-```
-or the same
-```
-cd %path_to_module_dir%
-python -m unittest discover -v -s ./tests/unit
-```
+#### Functional test
+Tests:
+* test_method_handler_with_mocked_storage - test different scenarios of requests.
+* test_functional_with_running_server - this script request the data from running server and test different scenarios of requests.
+
+Note: Before running 'test_functional_with_running_server' test you have to run scoring api server and storage server.
 
 #### Integration test
 Tests:
-* test_integration – this script request the data from running server and test different scenarios of requests.
+* test_store - test work of storage handle with storage server (Redis server).
 
-Before running this test you have to run HTTP-server of scoring with the following parameters:
-* ip-address http://127.0.0.1
-* port 8080
+Note: Before running 'test_store' test you have to run redis server.
 
-Run Integration tests:
+#### How to run tests:
+For run all test scoring api server and storage server should be running.
+Also config the following parameters in your environment variable:
+* API_URL='<host>:<port>' – address of scoring api server (Requared)
+* REDIS_HOST='<host>' – host of storage server (Requared)
+* REDIS_PORT='<port>' – port of storage server
+* REDIS_PASSWORD='<password>' – password of storage server
+
 ```
 cd %path_to_module_dir%
-bash run_tests_integration.sh
+export API_URL='http://127.0.0.1:8080/method/' \
+       REDIS_HOST='localhost'
+python -m unittest discover -v -s ./tests/
 ```
-or the same
-```
-cd %path_to_module_dir%
-python -m unittest discover -v -s ./tests/integration
-```
-
-#### Run All Tests
-Run Integration tests:
+OR if you want to run tests with default settings, use the bash 'run_all_tests.sh' script (the same as above)
 ```
 cd %path_to_module_dir%
 bash run_all_tests.sh
 ```
-or the same
+
+Also you can run:
 ```
-cd %path_to_module_dir%
-python -m unittest discover -v -s ./tests/
+# Run only Unit tests
+python -m unittest discover -v -s ./tests/unit
+
+# Run only Functional tests
+python -m unittest discover -v -s ./tests/functional
+
+# Run only Integration tests
+python -m unittest discover -v -s ./tests/integration
 ```
 
 :rocket:

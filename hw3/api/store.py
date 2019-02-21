@@ -28,7 +28,7 @@ class RedisConnection(object):
                     redis.exceptions.TimeoutError) as e:
                 if attempt > self.retry:
                     logging.error("Redis storage isn't available!")
-                    raise e
+                    raise
                 logging.info("Connection problem to Redis storage. "
                              "Reconnect attempt {} of {}".format(attempt, self.retry))
                 attempt += 1

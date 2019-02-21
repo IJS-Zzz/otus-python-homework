@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import datetime
@@ -7,6 +8,7 @@ import redis
 import time
 import unittest
 
+import context_unit
 from context import scoring, store
 from utils import cases, MockRedisConnection
 

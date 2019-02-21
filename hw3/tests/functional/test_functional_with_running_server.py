@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import datetime
@@ -6,20 +7,28 @@ import json
 import requests
 import unittest
 
-import context_add_unit_folder
-from context import api
+import context_functional
+from context import api, API_URL, STORE_CONFIG
 from utils import cases, gen_valid_token
 
 # BEFORE RUNNING THIS TEST YOU HAVE TO RUN HTTP-SERVER WITH THE FOLLOWING PARAMETERS:
 # - ip-address http://127.0.0.1
 # - port 8080
+# 
+# or use custom address:
+# - Set in Environment Variable attribute API_URL with address to scoring api server
+#   API_URL='<host>:<port>'
+#
 
 # Note: Run server with test_config for DB
 
 
-class TestIntegrationWithRunningServer(unittest.TestCase):
+@unittest.skipIf(not STORE_CONFIG or not API_URL,
+                 "Address of Scoring API server or "
+                 "Redis server doesn't set in environment variables.")
+class TestFunctionalWithRunningServer(unittest.TestCase):
     def setUp(self):
-        self.base_url = 'http://127.0.0.1:8080/method'
+        self.base_url = API_URL
         self.headers = {'Content-Type': 'application/json'}
 
         self.clients = {
@@ -32,7 +41,7 @@ class TestIntegrationWithRunningServer(unittest.TestCase):
         self.data_from_store = {}
 
         # Create test data in DB and save exist data from them
-        self.store = api.Storage(api.RedisConnection, api.STORE_CONFIG)
+        self.store = api.Storage(api.RedisConnection, STORE_CONFIG)
         for cid, interest in self.clients.items():
             key = "i:%s" % cid
             exist_data = self.store.get(key)

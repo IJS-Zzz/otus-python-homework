@@ -1,9 +1,11 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import unittest
 import json
 from datetime import datetime
 
+import context_unit
 from context import api, store
 from utils import cases, MockRedisConnection
 
