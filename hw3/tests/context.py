@@ -21,7 +21,7 @@ API_URL = os.getenv('API_URL')
 STORE_CONFIG = {}
 
 env_vars = {
-    'host': os.getenv('REDIS_HOST', 'localhost'),  # Requared
+    'host': os.getenv('REDIS_HOST'),
     'port': os.getenv('REDIS_PORT'),
     'password': os.getenv('REDIS_PASSWORD'),
 }
