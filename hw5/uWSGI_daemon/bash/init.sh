@@ -2,6 +2,7 @@
 
 # Run docker command
 # docker run -ti --rm -p 8080:80 -v /Users/smurov/Desktop/OTUS_Python/otus-python-homework/hw5/uWSGI_daemon:/home/box centos /bin/bash
+# docker run -ti --rm -p 8080:80 -v /Users/smurov/Desktop/OTUS_Python/otus-python-homework/hw5/uWSGI_daemon:/home/box/ my_centos /bin/bash
 
 # set -xe
 set -e

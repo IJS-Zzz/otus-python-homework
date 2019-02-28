@@ -23,8 +23,11 @@ try:
 except (ValueError, TypeError):
     LOGGING = True
 
-LOGGING_PATH = os.environ.get("LOGGING_PATH", "/var/log/ip2w")
+LOGGING_PATH = os.path.abspath(os.environ.get("LOGGING_PATH", "/var/log/ip2w"))
 LOGGING_FILE = 'ip2w-error.log'
+
+if not os.path.exists(LOGGING_PATH):
+    os.mkdir(LOGGING_PATH)
 
 
 """ HTTP Codes """
