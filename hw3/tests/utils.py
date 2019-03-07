@@ -3,6 +3,7 @@
 import datetime
 import functools
 import hashlib
+import redis
 
 from context import api
 
@@ -63,3 +64,22 @@ class MockRedisConnection(object):
         self.get_counter = 0
         self.set_counter = 0
         self.delete_counter = 0
+
+
+##### MonkeyPatch #####
+
+def connect_failer(retry):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            if wrapper.calls < retry:
+                wrapper.calls += 1
+                raise redis.exceptions.ConnectionError(
+                    "Connection dropped with 'connect_failer' decorator")
+
+            return func(*args, **kwargs)
+
+        wrapper.calls = 0
+        
+        return wrapper
+    return decorator

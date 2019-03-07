@@ -2,12 +2,15 @@
 # -*- coding: utf-8 -*-
 
 import redis
+import socket
+import sys
 import time
 import unittest
 
+
 import context_integration
 from context import store, STORE_CONFIG
-from utils import cases
+from utils import cases, connect_failer
 
 """
     BEFORE RUNNING THIS TEST YOU HAVE TO RUN REDIS SERVER
@@ -19,17 +22,6 @@ from utils import cases
         REDIS_PORT
         REDIS_PASSWORD
 """
-
-@unittest.skipIf(not STORE_CONFIG,
-                 "Address of Redis server "
-                 "doesn't set in environment variables.")
-class TestRedisConnection(unittest.TestCase):
-    
-    def test_retry(self):
-        pass
-
-    def test_get(self):
-        pass
 
 
 @unittest.skipIf(not STORE_CONFIG,
@@ -101,15 +93,6 @@ class TestStorage(unittest.TestCase):
         self.store.cache_set(self.get_key(key), value)
         self.assertEqual(self.redis.get(self.get_key(key)), str(value))
 
-    @cases([
-        ('key_key', 'value_value'),
-        ('111_111', 232344),
-        ('name_name', 'Alex_Alex'),
-    ])
-    def test_delete_method(self, key, value):
-        self.redis.set(self.get_key(key), value)
-        self.store.delete(self.get_key(key))
-        self.assertEqual(self.redis.get(self.get_key(key)), None)
 
     @cases([
         ('test_key', 'test_value', 1),
@@ -128,37 +111,104 @@ class TestStorage(unittest.TestCase):
         )
 
 
+@unittest.skipIf(not STORE_CONFIG,
+                 "Address of Redis server "
+                 "doesn't set in environment variables.")
 class TestRedisConnectionRetry(unittest.TestCase):
+    """
+        Test case:
+        Сheck of reconnection functions at disconnection.
+    """
+
     def setUp(self):
-        self.count = 0
+        self.config = config = {
+            'host': STORE_CONFIG['host'],
+            'port': STORE_CONFIG['port'],
+            'db': STORE_CONFIG['db'],
+            'password': STORE_CONFIG['password'],
+            'timeout': 1,
+            'retry': 2,
+            'backoff_factor': 0.01,
+        }
 
-        self.host = 'wrong_host'
-        self.backoff = 0
-        self.redis_connection = store.RedisConnection
+        self.redis = redis.Redis(host=config['host'],
+                                 port=config['port'],
+                                 db=config['db'],
+                                 password=config['password'])
 
-    def raise_exception(self, exception):
-        self.count += 1
-        raise exception
+        self.prefix = '_test_storage_'
+        self.created_data = set()
 
-    def get_count_and_reset(self):
-        count = self.count
-        self.count = 0
-        return count
+    def tearDown(self):
+        if self.created_data:
+            self.redis.delete(*self.created_data)
+
+    def get_key(self, key):
+        test_key = self.prefix + key
+        self.created_data.add(test_key)
+        return test_key
 
     @cases([
-        (redis.exceptions.ConnectionError, 0),
-        (redis.exceptions.TimeoutError, 1),
-        (redis.exceptions.ConnectionError, 3),
-        (redis.exceptions.TimeoutError, 5),
+        ('key', 'value', 0),
+        ('key2', '234', 1),
+        ('name', 'Alex', 4),
     ])
-    def test_retry_method(self, exception, retry):
-        self.assertTrue(issubclass(exception, Exception))
-        conn = self.redis_connection(host=self.host,
-                                     retry=retry,
-                                     backoff_factor=self.backoff)
-        with self.assertRaises(exception):
-            conn._retry(self.raise_exception, exception)
-        self.assertEqual(self.get_count_and_reset(), retry + 1)
+    def test_retry_with_get_method(self, key, value, retry):
+        config = self.config
+        config['retry'] = retry
+
+        # Set value in DB
+        self.redis.set(self.get_key(key), value)
+
+        storage = store.Storage(store.RedisConnection, config)
+        self.assertIsInstance(storage.db.db, redis.Redis)
+        storage.db.db.get = connect_failer(retry)(storage.db.db.get)
+
+        # Get value from DB with N times failed connection
+        self.assertEqual(storage.get(self.get_key(key)), value)
+        self.assertEqual(storage.db.db.get.calls, retry)
+
+    @cases([
+        ('name', 'Garry', 1),
+        ('age', '23', 2),
+        ('car', 'Lada', 5),
+    ])
+    def test_retry_with_set_method(self, key, value, retry):
+        config = self.config
+        config['retry'] = retry
+
+        storage = store.Storage(store.RedisConnection, config)
+        self.assertIsInstance(storage.db.db, redis.Redis)
+        storage.db.db.set = connect_failer(retry)(storage.db.db.set)
+
+        # Set value in DB with N times failed connection
+        self.assertTrue(storage.set(self.get_key(key), value))
+        self.assertEqual(storage.db.db.set.calls, retry)
+
+        # Check value in DB
+        self.assertEqual(self.redis.get(self.get_key(key)), value)
+
+    @cases([
+        ('name', 'Lora', 1),
+        ('age', '97', 2),
+        ('car', 'Volvo', 5),
+    ])
+    def test_retry_fail(self, key, value, retry):
+        """
+            _retry methor of RedisConnection try to connect N-1 times
+            connect_failer drop connect N times
+        """
+        config = self.config
+        config['retry'] = retry - 1
+
+        storage = store.Storage(store.RedisConnection, config)
+        self.assertIsInstance(storage.db.db, redis.Redis)
+        storage.db.db.set = connect_failer(retry)(storage.db.db.set)
+
+        self.assertTrue(storage.db.db.ping())
+        with self.assertRaises(redis.exceptions.ConnectionError):
+            storage.set(key, value)
+        self.assertEqual(storage.db.db.set.calls, retry)
 
 
 if __name__ == "__main__":

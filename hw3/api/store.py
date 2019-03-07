@@ -24,8 +24,9 @@ class RedisConnection(object):
         while True:
             try:
                 return func(*args, **kwargs)
-            except (redis.exceptions.ConnectionError,
-                    redis.exceptions.TimeoutError) as e:
+            except Exception as e:
+            # except (redis.exceptions.ConnectionError,
+            #         redis.exceptions.TimeoutError) as e:
                 if attempt > self.retry:
                     logging.error("Redis storage isn't available!")
                     raise
@@ -42,9 +43,6 @@ class RedisConnection(object):
 
     def set(self, key, value, expires=None):
         return self._retry(self.db.set, key, value, ex=expires)
-
-    def delete(self, key):
-        return self._retry(self.db.delete, key)
 
 
 class Storage(object):
@@ -72,6 +70,3 @@ class Storage(object):
                 redis.exceptions.TimeoutError) as e:
             logging.error("Cache storage isn't available!")
             logging.info("Cannot save to cache database.")
-
-    def delete(self, key):
-        return self.db.delete(key)

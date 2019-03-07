@@ -6,6 +6,7 @@ import hashlib
 import json
 import requests
 import unittest
+import redis
 
 import context_functional
 from context import api, API_URL, STORE_CONFIG
@@ -38,25 +39,31 @@ class TestFunctionalWithRunningServer(unittest.TestCase):
             3: ['shopping', 'Milano'],
             4: ['golf']
         }
-        self.data_from_store = {}
 
-        # Create test data in DB and save exist data from them
         self.store = api.Storage(api.RedisConnection, STORE_CONFIG)
+        
+        # Create test data in DB and save exist data from them
+        self.redis = redis.Redis(host=STORE_CONFIG['host'],
+                                 port=STORE_CONFIG['port'],
+                                 db=STORE_CONFIG['db'],
+                                 password=STORE_CONFIG['password'])
+        self.data_from_store = {}
+        
         for cid, interest in self.clients.items():
             key = "i:%s" % cid
-            exist_data = self.store.get(key)
+            exist_data = self.redis.get(key)
             if exist_data:
                 self.data_from_store[key] = exist_data
-            self.store.set(key, json.dumps(interest))
+            self.redis.set(key, json.dumps(interest))
 
     def tearDown(self):
         # Delete data from DB or set exist data
         for cid in self.clients.keys():
             key = "i:%s" % cid
             if key in self.data_from_store:
-                self.store.set(key, self.data_from_store[key])
+                self.redis.set(key, self.data_from_store[key])
             else:
-                self.store.delete(key)
+                self.redis.delete(key)
 
     def get_response_from_http_server(self, request, url=None, headers={}):
         url = url if url else self.base_url
