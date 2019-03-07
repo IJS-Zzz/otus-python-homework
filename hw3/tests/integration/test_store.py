@@ -93,7 +93,6 @@ class TestStorage(unittest.TestCase):
         self.store.cache_set(self.get_key(key), value)
         self.assertEqual(self.redis.get(self.get_key(key)), str(value))
 
-
     @cases([
         ('test_key', 'test_value', 1),
     ])

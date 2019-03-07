@@ -80,6 +80,6 @@ def connect_failer(retry):
             return func(*args, **kwargs)
 
         wrapper.calls = 0
-        
+
         return wrapper
     return decorator
