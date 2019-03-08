@@ -552,15 +552,16 @@ class OnlineScoreRequest(BaseRequest):
                 gender - birthday
         """
         not_valid = True
-        for pair in self.field_pairs:
-            if hasattr(self, pair[0]) and hasattr(self, pair[1]):
-                value_1 = getattr(self, pair[0], None)
-                value_1_is_empty = self.fields[pair[0]].is_empty(value_1)
 
-                value_2 = getattr(self, pair[1], None)
-                value_2_is_empty = self.fields[pair[1]].is_empty(value_2)
+        for member_1, member_2 in self.field_pairs:
+            if hasattr(self, member_1) and hasattr(self, member_2):
 
-                if value_1_is_empty or value_2_is_empty:
+                # check first member of pair
+                if self.fields[member_1].is_empty(getattr(self, member_1)):
+                    continue
+
+                # check second member of pair
+                if self.fields[member_2].is_empty(getattr(self, member_2)):
                     continue
 
                 # both fields in pair isn't empty
