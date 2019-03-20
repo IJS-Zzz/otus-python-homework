@@ -13,6 +13,7 @@ import threading
 import time
 import urllib
 import urlparse
+from multiprocessing.pool import ThreadPool
 
 
 ############### SETTINGS ###############
@@ -156,11 +157,10 @@ def setup_logger(logging_file=None, level=logging.INFO):
 ############### UTILITIES ###############
 
 def get_cleaned_url_wo_query_string(url):
+    print(url)
     decode_url = urllib.unquote(url)
     path = urlparse.urlparse(decode_url).path
-    url_parts = (part for part in path.split('/')
-                 if part not in ('', '.', '..'))
-    return '/' + '/'.join(url_parts)
+    return os.path.normpath(path)
 
 
 def file_finder(root_dir, index_file, path):
@@ -182,10 +182,11 @@ def get_file_mimetype(path):
 ############### Thread HTTP Server ###############
 
 class ThreadHTTPServer(object):
-    def __init__(self, host, port, root_dir,
-                 request_handler, sock_backlog=WORKER_QUEUE_SIZE):
+    def __init__(self, host, port, root_dir,request_handler,
+                 sock_backlog=WORKER_QUEUE_SIZE, pool_size=100):
         self.sock = None
         self.sock_backlog = sock_backlog
+        self.pool_size = pool_size
 
         self.address = (host, port)
         self.root_dir = root_dir
@@ -205,13 +206,18 @@ class ThreadHTTPServer(object):
 
     def serve_forever(self):
         try:
+            pool = ThreadPool(self.pool_size)
+
             while True:
                 conn, addr = self.sock.accept()
                 logging.debug('Connected | P: {} | PID: {}'.format(
                     multiprocessing.current_process().name, os.getpid()))
-                t = threading.Thread(target=self.request_handler, args=(conn, addr, self.root_dir, True))
-                t.daemon = True
-                t.start()
+                # t = threading.Thread(target=self.request_handler, args=(conn, addr, self.root_dir, True))
+                # t.daemon = True
+                # t.start()
+
+                pool.apply(self.request_handler, args=(conn, addr, self.root_dir, True))
+
         except (KeyboardInterrupt, SystemExit) as e:
             pass
         finally:

@@ -32,6 +32,9 @@ Multiprocessing scheme:
 ### Requirements
 Python version 2.7 and above.
 
+### Details
+The server supports the following file types : 
+  * \*.html, \*.css, \*.css.js, \*.jpg, \*.jpeg, \*.png, \*.gif, \*.swf
 
 ### How to run:
 ```
@@ -59,45 +62,7 @@ AB testing results:
 ```
 ab -n 50000 -c 100 -r http://127.0.0.1/httptest/dir2/index.html
 ```
-2 workers 25000 requests
-```
-Server Software:        OtusServer
-Server Hostname:        127.0.0.1
-Server Port:            80
-
-Document Path:          /httptest/dir2/index.html
-Document Length:        34 bytes
-
-Concurrency Level:      100
-Time taken for tests:   104.638 seconds
-Complete requests:      25000
-Failed requests:        0
-Total transferred:      4350000 bytes
-HTML transferred:       850000 bytes
-Requests per second:    238.92 [#/sec] (mean)
-Time per request:       418.552 [ms] (mean)
-Time per request:       4.186 [ms] (mean, across all concurrent requests)
-Transfer rate:          40.60 [Kbytes/sec] received
-
-Connection Times (ms)
-              min  mean[+/-sd] median   max
-Connect:        0    0   0.3      0       5
-Processing:    15  417 230.4    403    1981
-Waiting:       13  408 225.9    395    1941
-Total:         15  417 230.4    403    1981
-
-Percentage of the requests served within a certain time (ms)
-  50%    403
-  66%    500
-  75%    569
-  80%    608
-  90%    703
-  95%    776
-  98%    882
-  99%    998
- 100%   1981 (longest request)
-```
-5 workers 50000 requests
+2 workers 50000 requests
 
 ```
 Server Software:        OtusServer
@@ -108,31 +73,33 @@ Document Path:          /httptest/dir2/index.html
 Document Length:        34 bytes
 
 Concurrency Level:      100
-Time taken for tests:   180.044 seconds
+Time taken for tests:   296.573 seconds
 Complete requests:      50000
 Failed requests:        0
 Total transferred:      8700000 bytes
 HTML transferred:       1700000 bytes
-Requests per second:    277.71 [#/sec] (mean)
-Time per request:       360.087 [ms] (mean)
-Time per request:       3.601 [ms] (mean, across all concurrent requests)
-Transfer rate:          47.19 [Kbytes/sec] received
+Requests per second:    168.59 [#/sec] (mean)
+Time per request:       593.145 [ms] (mean)
+Time per request:       5.931 [ms] (mean, across all concurrent requests)
+Transfer rate:          28.65 [Kbytes/sec] received
 
 Connection Times (ms)
               min  mean[+/-sd] median   max
-Connect:        0    1 101.8      0   22764
-Processing:    10  359 219.7    320    2140
-Waiting:        8  349 215.3    311    1851
-Total:         10  360 242.9    320   23528
+Connect:        0    0   0.2      0      19
+Processing:     7  592 406.0    589    2005
+Waiting:        6  591 405.9    587    2005
+Total:          7  592 406.0    589    2005
 
 Percentage of the requests served within a certain time (ms)
-  50%    320
-  66%    413
-  75%    480
-  80%    525
-  90%    655
-  95%    777
-  98%    918
-  99%   1026
- 100%  23528 (longest request)
+  50%    589
+  66%    845
+  75%    961
+  80%   1022
+  90%   1126
+  95%   1183
+  98%   1239
+  99%   1278
+ 100%   2005 (longest request)
 ```
+
+:rocket:
