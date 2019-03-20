@@ -15,11 +15,23 @@ from collections import OrderedDict
 from optparse import OptionParser
 
 import scoring
+from store import RedisConnection, Storage
 
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
 ADMIN_SALT = "42"
+
+STORE_CONFIG = {
+    'host': 'localhost',
+    'port': 6379,
+    'db': 0,
+    'password': None,
+    'timeout': 3,
+    'retry': 3,
+    'backoff_factor': 0.1,
+}
+
 OK = 200
 BAD_REQUEST = 400
 FORBIDDEN = 403
@@ -83,6 +95,7 @@ class Field(object):
         self.check_required_and_nullable(value)
         if value is not None:
             self.field_validate(value)
+        return True
 
     @abstractmethod
     def field_validate(self, value):
@@ -151,6 +164,7 @@ class ArgumentsField(Field):
             return value
         return dict(value)
 
+
 class EmailField(CharField):
     """
         Email field:
@@ -186,8 +200,9 @@ class PhoneField(CharField):
         }
         self.error_messages.update({
             'invalid_type': "Value type must be a string or a number(integer).",
-            'invalid_value': "Value must start with 7",
-            'invalid_length': "Length of value must be 11 characters",
+            'invalid_value': "Value must start with 7.",
+            'invalid_length': "Length of value must be 11 characters.",
+            'invalid_char': "String must contain only characters of numbers."
         })
     
     def field_validate(self, value):
@@ -203,6 +218,13 @@ class PhoneField(CharField):
         if not value_str.startswith(unicode(self.conditions['first_char'])):
             raise ValidationError(self.error_messages['invalid_value'])
 
+        if isinstance(value, (str, unicode)):
+            for c in value:
+                try:
+                    int(c)
+                except ValueError as e:
+                    raise ValidationError(self.error_messages['invalid_char'])
+
 
 class DateField(CharField):
     """
@@ -214,7 +236,7 @@ class DateField(CharField):
         super(DateField, self).__init__(*args, **kwarg)
         self.error_messages.update({
             'invalid_format': "Value format must be DD.MM.YYYY",
-            'invalid_date': "Value must be valid date",
+            'invalid_date': "Value must be valid date.",
         })
 
     def _to_date(self, value):
@@ -281,7 +303,7 @@ class GenderField(Field):
     def __init__(self, *args, **kwarg):
         super(GenderField, self).__init__(*args, **kwarg)
         self.error_messages.update({
-            'invalid_value': "Value must be 0, 1 or 2.",
+            'invalid_value': "Value must be {}, {} or {}.".format(*GENDERS)
         })
 
     def field_validate(self, value):
@@ -310,7 +332,7 @@ class ClientIDsField(Field):
         super(ClientIDsField, self).__init__(*args, **kwarg)
         self.error_messages.update({
             'invalid_type': "Value type must be an array.",
-            'invalid_value': "Type of elements of list must be a number(integer)."
+            'invalid_value': "Type of elements of list must be a positive number(integer)."
         })
 
     def field_validate(self, value):
@@ -318,7 +340,7 @@ class ClientIDsField(Field):
             raise ValidationError(self.error_messages['invalid_type'])
 
         for elem in value:
-            if not isinstance(elem, int):
+            if not isinstance(elem, int) or elem < 0:
                 raise ValidationError(self.error_messages['invalid_value'])
 
     def clean(self, value):
@@ -380,7 +402,7 @@ class BaseRequest(object):
         if not hasattr(self, 'error_messages'):
             self.error_messages = {}
         self.error_messages.update({
-            'unexpected': "Field {} is unexpected",
+            'unexpected': "Field is unexpected",
         })
 
         self.fields = copy.deepcopy(self.base_fields)
@@ -416,7 +438,7 @@ class BaseRequest(object):
         # Check to unexpected fields
         for field_name in self.data.keys():
             if field_name not in self.fields:
-                self._errors[field_name] = self.error_messages['unexpected'].format(field_name)
+                self._errors[field_name] = self.error_messages['unexpected']
 
         self._validate()
         self._clean()
@@ -530,15 +552,16 @@ class OnlineScoreRequest(BaseRequest):
                 gender - birthday
         """
         not_valid = True
-        for pair in self.field_pairs:
-            if hasattr(self, pair[0]) and hasattr(self, pair[1]):
-                value_1 = getattr(self, pair[0], None)
-                value_1_is_empty = self.fields[pair[0]].is_empty(value_1)
 
-                value_2 = getattr(self, pair[1], None)
-                value_2_is_empty = self.fields[pair[1]].is_empty(value_2)
+        for member_1, member_2 in self.field_pairs:
+            if hasattr(self, member_1) and hasattr(self, member_2):
 
-                if value_1_is_empty or value_2_is_empty:
+                # check first member of pair
+                if self.fields[member_1].is_empty(getattr(self, member_1)):
+                    continue
+
+                # check second member of pair
+                if self.fields[member_2].is_empty(getattr(self, member_2)):
                     continue
 
                 # both fields in pair isn't empty
@@ -575,8 +598,8 @@ class MethodRequest(BaseRequest):
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
-    arguments = ArgumentsField(required=True, nullable=True)
     method = CharField(required=True, nullable=False)
+    arguments = ArgumentsField(required=True, nullable=True)
 
     @property
     def is_admin(self):
@@ -606,6 +629,7 @@ def method_handler(request, context, store):
         :param store: object
         :return: Answer (errors_dict if error), Code
     """
+
     handlers = {
         "online_score": OnlineScoreRequest,
         "clients_interests": ClientsInterestsRequest,
@@ -637,7 +661,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = None
+    store = Storage(RedisConnection, STORE_CONFIG)
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
@@ -648,6 +672,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         request = None
         try:
             data_string = self.rfile.read(int(self.headers['Content-Length']))
+            print data_string
             request = json.loads(data_string)  # in Unicode
         except:
             code = BAD_REQUEST

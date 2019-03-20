@@ -1,30 +1,36 @@
-import hashlib
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 import datetime
-import functools
+import hashlib
+import json
+import requests
 import unittest
 
-import api
+import context_functional
+from context import api, store
+from utils import cases, MockRedisConnection
 
 
-def cases(cases):
-    def decorator(f):
-        @functools.wraps(f)
-        def wrapper(*args):
-            for c in cases:
-                new_args = args + (c if isinstance(c, tuple) else (c,))
-                f(*new_args)
-        return wrapper
-    return decorator
-
-
-class TestSuite(unittest.TestCase):
+class TestMethodHandler(unittest.TestCase):
     def setUp(self):
         self.context = {}
         self.headers = {}
-        self.settings = {}
+
+        store_config = {}
+        self.store = store.Storage(MockRedisConnection, store_config)
+        self.clients = {
+            0: ['travel', 'mountain', 'Patagonia'],
+            1: ['summer', 'sea'],
+            2: ['winter', 'ski'],
+            3: ['shopping', 'Milano'],
+            4: ['golf']
+        }
+        for cid, interest in self.clients.items():
+            self.store.set("i:%s" % cid, json.dumps(interest))
 
     def get_response(self, request):
-        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.settings)
+        return api.method_handler({"body": request, "headers": self.headers}, self.context, self.store)
 
     def set_valid_auth(self, request):
         if request.get("login") == api.ADMIN_LOGIN:
