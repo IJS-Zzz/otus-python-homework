@@ -212,10 +212,6 @@ class ThreadHTTPServer(object):
                 conn, addr = self.sock.accept()
                 logging.debug('Connected | P: {} | PID: {}'.format(
                     multiprocessing.current_process().name, os.getpid()))
-                # t = threading.Thread(target=self.request_handler, args=(conn, addr, self.root_dir, True))
-                # t.daemon = True
-                # t.start()
-
                 pool.apply(self.request_handler, args=(conn, addr, self.root_dir, True))
 
         except (KeyboardInterrupt, SystemExit) as e:
