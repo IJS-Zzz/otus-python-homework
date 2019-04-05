@@ -13,9 +13,7 @@ nginx + uWSGI + ip2w
 Please set WEATHER_APPID in environment variables.
 WEATHER_APPID is api_key from openweathermap.org
 
-ip2w server write logs in /var/log/ip2w/ip2w-error.log files by default. You can change log folder with use LOGGING_PATH in environment variables.
-
-If you want to off logging use LOGGING='0' in environment variables.
+ip2w server write logs in /var/log/ip2w/ip2w-error.log files.
 
 ### Example
 ```
