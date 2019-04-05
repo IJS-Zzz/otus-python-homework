@@ -6,20 +6,17 @@ import unittest
 Before run this test you should set WEATHER_APPID in environment variables.
 """
 # OR set here:
-# os.environ['WEATHER_APPID']=''
+os.environ['WEATHER_APPID']='c46b11ddfc044a61b898da93aae0d8a5'
 
 WEATHER_APPID = os.environ.get("WEATHER_APPID")
 if not WEATHER_APPID:
     raise RuntimeError('Please set WEATHER_APPID in environment variables.')
-os.environ['LOGGING'] = '0'
 
 
 from ip2w import app
 
 
 class TestApi(unittest.TestCase):
-    def setUp(self):
-        pass
 
     def start_response_handler(self, status, headers):
         self.code = status.split()[0]

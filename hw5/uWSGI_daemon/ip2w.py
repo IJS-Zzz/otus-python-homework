@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import argparse
 import os
 import re
 import json
@@ -14,20 +15,14 @@ if not WEATHER_APPID:
     raise RuntimeError('Please set WEATHER_APPID in environment variables.')
 
 
-""" Logging Config """
-# Default write log in file
-try:
-    # LOGGING set '0' – Write in stdout
-    not_write_log = os.environ.get('LOGGING')
-    LOGGING = bool(int(not_write_log))
-except (ValueError, TypeError):
-    LOGGING = True
+############### SETTINGS ###############
 
-LOGGING_PATH = os.path.abspath(os.environ.get("LOGGING_PATH", "/var/log/ip2w"))
+LOGGING_PATH = '/var/log/ip2w'
 LOGGING_FILE = 'ip2w-error.log'
+LOGGING_LEVEL = logging.INFO
 
-if not os.path.exists(LOGGING_PATH):
-    os.mkdir(LOGGING_PATH)
+RETRY = 3
+BACKOFF_FACTOR = 0.3
 
 
 """ HTTP Codes """
@@ -47,23 +42,64 @@ INTERNAL_ERROR_MESSAGE = 'Oops! Something went wrong, sorry. We fix it at soon.'
 IP4_REGEX = re.compile(r"^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
 
 
-class StopWorkingException(Exception):
-    pass
+############### SERVICE ###############
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="ip2w server")
+    # Logging
+    parser.add_argument(
+        '--log',
+        dest='logging',
+        action='store_true',
+        help="Enable write logging. (flag)")
+    # Logging path
+    parser.add_argument(
+        '--logpath',
+        dest='log_path',
+        action='store',
+        help="Path to logging directory.")
+    
+    return parser.parse_args()
 
-def setup_logger(logging_file=None):
+def setup_logger(logging_file=None, level=logging.INFO):
     logging.basicConfig(
         filename=logging_file,
         format='[%(asctime)s] %(levelname).1s %(message)s',
         datefmt='%Y.%m.%d %H:%M:%S',
-        level=logging.INFO)
+        level=level)
 
 
-def ip4_is_valid(ip):
-    """ Validate IPv4 """
-    match = re.match(IP4_REGEX, ip)
-    if match:
-        return True
+############### Application ###############
+
+class StopWorkingException(Exception):
+    pass
+
+
+class ResponseWithErrorException(Exception):
+    def __init__(self,
+                 code=BAD_REQUEST,
+                 message=ERRORS[BAD_REQUEST]):
+        super(ResponseWithErrorException, self).__init__()
+        self.code = code
+        self.message = message
+
+
+def requests_connect_retry(func, uri, *args, **kwargs):
+    attempt = 1
+    while True:
+        try:
+            return func(uri, *args, **kwargs)
+        except requests.exceptions.RequestException as e:
+            if attempt > RETRY:
+                logging.error("Connection to {} failed".format(uri))
+                raise
+            logging.info(("Connection problem to API service.\nURI: {}\n"
+                          "Reconnect attempt {} of {}").format(uri, attempt, RETRY))
+            attempt += 1
+
+            # Use Delay
+            delay = BACKOFF_FACTOR * (2**attempt)
+            time.sleep(delay)
 
 
 def get_ip_info(ip):
@@ -73,13 +109,19 @@ def get_ip_info(ip):
     """
     url = 'http://ipinfo.io/{ip}/json'.format(ip=ip)
     try:
-        response = requests.get(url, headers={
-            'Accept': 'application/json'})
+        response = requests_connect_retry(
+            requests.get,
+            url,
+            headers={
+                'Accept': 'application/json'
+            }
+        )
     except requests.exceptions.RequestException as err:
         return {"status": err.response.status_code, "message": err.message}
     try:
         return response.json()
     except ValueError as err:
+        logging.error('Wrong json response from {}. Error message: {}'.format(url, err.message))
         return {"status": response.status_code, "message": err.message}
 
 
@@ -91,18 +133,112 @@ def get_weather(lat, lon, api_key):
     """
     url = 'http://api.openweathermap.org/data/2.5/weather'
     try:
-        response = requests.get(url, params={
-            "lat": lat,
-            "lon": lon,
-            "units": "metric",
-            "APPID": api_key
-        })
+        response = requests_connect_retry(
+            requests.get,
+            url,
+            params={
+                "lat": lat,
+                "lon": lon,
+                "units": "metric",
+                "APPID": api_key
+            }
+        )
     except requests.exceptions.RequestException as e:
         return {"status": err.response.status_code, "message": err.message}
     try:
         return response.json()
     except ValueError:
+        logging.error('Wrong json response from {}. Error message: {}'.format(url, err.message))
         return {"status": response.status_code, "message": err.message}
+
+
+def ip4_is_valid(ip):
+    """ Validate IPv4 """
+    match = re.match(IP4_REGEX, ip)
+    if match:
+        return True
+
+
+def validate_uri_and_get_ip(uri):
+    """ Validate URI """
+    if uri is None:
+        uri = ""
+
+    if uri.startswith('/'):
+        uri = uri.replace('/', '', 1)
+    parts_uri = uri.split('/')
+
+    if len(parts_uri) != 1:
+        raise ResponseWithErrorException(code=NOT_FOUND,
+                                         message="Incorrect URL")
+    ip = parts_uri[0]
+
+    if not ip4_is_valid(ip):
+        raise ResponseWithErrorException(message="Invalid IP address")
+
+    return ip
+
+
+def get_ip_geolocation(ip):
+    """ IP Info """
+    ip_info = get_ip_info(ip)
+
+    if 'bogon' in ip_info:
+        # 127.0.0.1, 0.0.0.0 and so on
+        raise ResponseWithErrorException(message="IP address is a bogon")
+
+    if 'status' in ip_info:
+        logging.error('Request failed with status code {}. message: "{}"'.format(
+            ip_info['status'],
+            ip_info.get('message', '')))
+        raise StopWorkingException('Problems with request (ipinfo.io)')
+
+    try:
+        lat, lon = ip_info.get('loc', '').split(',')
+    except ValueError:
+        logging.error("Invalid JSON-scheme (ipinfo). response: {}".format(ip_info))
+        raise StopWorkingException("Incorrect response (ipinfo.io)")
+
+    return lat, lon
+
+
+def get_weather_response(lat, lon):
+    """ Weather """
+    weather_data = get_weather(lat, lon, WEATHER_APPID)
+    if 'status' in weather_data:
+        logging.error('Request failed with status code {}. message: "{}"'.format(
+            weather_data['status']),
+            weather_data.get('message', ''))
+        raise StopWorkingException('Problems with request (openweathermap.org)')
+    try:
+        response = {
+            "city": weather_data['name'],
+            "temp": weather_data['main']['temp'],
+            "conditions": weather_data['weather'][0]['description']
+        }
+    except KeyError:
+        logging.error("Invalid JSON-scheme (ipinfo). response: {}".format(ip_info))
+        raise StopWorkingException("Incorrect response (openweathermap.org)")
+
+    return response
+
+
+def do_response(start_response, code, response):
+    """ Response """
+    if code == OK:
+        status = '{} OK'.format(OK)
+    else:
+        if code not in ERRORS:
+            logging.error('Unexpected response code - {}'.format(code))
+        status = '{} {}'.format(code, ERRORS[code])
+
+    response_body = json.dumps(response)
+    response_headers = [
+        ('Content-Type', 'application/json'),
+        ('Content-Length', str(len(response_body)))
+    ]
+    start_response(status, response_headers)
+    return [response_body]
 
 
 def application_handler(env, start_response):
@@ -125,81 +261,32 @@ def application_handler(env, start_response):
         start_response(status, response_headers)
         return [response_body]
 
-    """ Validate URI """
-    uri = env.get("PATH_INFO", "")
-
-    if uri.startswith('/'):
-        uri = uri.replace('/','',1)
-    parts_uri = uri.split('/')
-
-    if len(parts_uri) != 1:
-        return response_with_error(code=NOT_FOUND,
-                                   message="Incorrect URL")
-    ip = uri.split('/')[0]
-
-    if not ip4_is_valid(ip):
-        return response_with_error(message="Invalid IP address")
-
-    """ IP Info """
-    ip_info = get_ip_info(ip)
-    if 'bogon' in ip_info:
-        # 127.0.0.1, 0.0.0.0 and so on
-        return response_with_error(message="IP address is a bogon")
-    if 'status' in ip_info:
-        logging.error('Request failed with status code {}. message: "{}"'.format(
-            ip_info['status'],
-            ip_info.get('message', '')))
-        raise StopWorkingException('Problems with request (ipinfo.io)')
     try:
-        lat, lon = ip_info.get('loc', '').split(',')
-    except ValueError:
-        logging.error("Invalid JSON-scheme (ipinfo). response: {}".format(ip_info))
-        raise StopWorkingException("Incorrect response (ipinfo.io)")
+        uri = env.get("PATH_INFO", "")
+        ip = validate_uri_and_get_ip(uri)
+        lat, lon = get_ip_geolocation(ip)
+        response = get_weather_response(lat, lon)
+    except ResponseWithErrorException as e:
+        fail_response = {"error": e.message}
+        return do_response(start_response, e.code, fail_response)
 
-    """ Weather """
-    weather_data = get_weather(lat, lon, WEATHER_APPID)
-    if 'status' in weather_data:
-        logging.error('Request failed with status code {}. message: "{}"'.format(
-            weather_data['status']),
-            weather_data.get('message', ''))
-        raise StopWorkingException('Problems with request (openweathermap.org)')
-    try:
-        response = {
-            "city": weather_data['name'],
-            "temp": weather_data['main']['temp'],
-            "conditions": weather_data['weather'][0]['description']
-        }
-    except KeyError:
-        logging.error("Invalid JSON-scheme (ipinfo). response: {}".format(ip_info))
-        raise StopWorkingException("Incorrect response (openweathermap.org)")
-
-    """ Response """
-    status = '{} OK'.format(OK)
-    response_body = json.dumps(response)
-    response_headers = [
-        ('Content-Type', 'text/plain'),
-        ('Content-Length', str(len(response_body)))
-    ]
-    start_response(status, response_headers)
-    return [response_body]
+    return do_response(start_response, OK, response)
 
 
 def application(env, start_response):
-    if LOGGING:
-        log_file = os.path.join(LOGGING_PATH, LOGGING_FILE)
-        setup_logger(log_file)
+    args = parse_args()
+    if args.logging:
+        log_path = args.log_path if args.log_path else LOGGING_PATH
+        log_file = os.path.join(log_path, LOGGING_FILE)
+        setup_logger(log_file, level=LOGGING_LEVEL)
     try:
         return application_handler(env, start_response)
     except Exception as ex:
         logging.exception(ex)
 
         """ Return error 500 """
-        status = '{} {}'.format(INTERNAL_ERROR, ERRORS[INTERNAL_ERROR])
-        response_body = json.dumps({"error": INTERNAL_ERROR_MESSAGE})
-        response_headers = [("Content-type", "application/json"),
-                            ('Content-Length', str(len(response_body)))]
-        start_response(status, response_headers)
-        return [response_body]
+        fail_response = {"error": INTERNAL_ERROR_MESSAGE}
+        return do_response(start_response, INTERNAL_ERROR, fail_response)
 
 
 # shortcut wsgi application
