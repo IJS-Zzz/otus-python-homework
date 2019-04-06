@@ -7,6 +7,7 @@ import re
 import json
 import requests
 import logging
+import time
 
 
 """ Check openweathermap.org api key """
@@ -117,12 +118,16 @@ def get_ip_info(ip):
             }
         )
     except requests.exceptions.RequestException as err:
-        return {"status": err.response.status_code, "message": err.message}
+        raise StopWorkingException(
+            'Problems with request from {} (ipinfo.io).\nError message: {}'.format(
+                url, err.message))
     try:
         return response.json()
     except ValueError as err:
-        logging.error('Wrong json response from {}. Error message: {}'.format(url, err.message))
-        return {"status": response.status_code, "message": err.message}
+        msg = 'Wrong json response from {} (ipinfo.io).\nError message: {}'.format(
+            url, err.message)
+        logging.error(msg)
+        raise StopWorkingException(msg)
 
 
 def get_weather(lat, lon, api_key):
@@ -143,13 +148,17 @@ def get_weather(lat, lon, api_key):
                 "APPID": api_key
             }
         )
-    except requests.exceptions.RequestException as e:
-        return {"status": err.response.status_code, "message": err.message}
+    except requests.exceptions.RequestException as err:
+        raise StopWorkingException(
+            'Problems with request from {} (openweathermap.org).\nError message: {}'.format(
+            url, err.message))
     try:
         return response.json()
-    except ValueError:
-        logging.error('Wrong json response from {}. Error message: {}'.format(url, err.message))
-        return {"status": response.status_code, "message": err.message}
+    except ValueError as err:
+        msg = 'Wrong json response from {} (openweathermap.org).\nError message: {}'.format(
+            url, err.message)
+        logging.error(msg)
+        raise StopWorkingException(msg)
 
 
 def ip4_is_valid(ip):
@@ -186,13 +195,6 @@ def get_ip_geolocation(ip):
     if 'bogon' in ip_info:
         # 127.0.0.1, 0.0.0.0 and so on
         raise ResponseWithErrorException(message="IP address is a bogon")
-
-    if 'status' in ip_info:
-        logging.error('Request failed with status code {}. message: "{}"'.format(
-            ip_info['status'],
-            ip_info.get('message', '')))
-        raise StopWorkingException('Problems with request (ipinfo.io)')
-
     try:
         lat, lon = ip_info.get('loc', '').split(',')
     except ValueError:
@@ -205,11 +207,6 @@ def get_ip_geolocation(ip):
 def get_weather_response(lat, lon):
     """ Weather """
     weather_data = get_weather(lat, lon, WEATHER_APPID)
-    if 'status' in weather_data:
-        logging.error('Request failed with status code {}. message: "{}"'.format(
-            weather_data['status']),
-            weather_data.get('message', ''))
-        raise StopWorkingException('Problems with request (openweathermap.org)')
     try:
         response = {
             "city": weather_data['name'],
