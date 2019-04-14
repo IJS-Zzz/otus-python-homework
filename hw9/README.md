@@ -1,10 +1,5 @@
 # MemcLoad
-Multiprocessing version of memc_load.py.<br>
-Multi-threaded on N workers.<br>
-Each worker processes one file at a time. <br>
-Main thread of process parses from given a file <br>
-info about user's installed apps and load to queue. <br>
-For each memcache address create thread for upload data.
+Multiprocessing version of memc_load.py.
 
 ### Requirements
 - Python 2.7
@@ -43,7 +38,7 @@ Options:
 ```
 ### Single thread handler execution time:
 ```
->time python memc_load.py --pattern=$(pwd)/data/*.tsv.gz --dry
+> time python memc_load.py --pattern=$(pwd)/data/*.tsv.gz --dry
 
 real    25m49.317s
 user    22m7.790s
@@ -51,9 +46,9 @@ sys 3m34.600s
 ```
 ### N-workers multi-threaded handler execution time:
 ```
-time python memc_load_multi.py --workers=2 --pattern=$(pwd)/data/*.tsv.gz --dry
+> time python memc_load_multi_v2.py --pattern=$(pwd)/data/*.tsv.gz --dry
 
-real    12m14.422s
-user    14m15.750s
-sys 3m39.350s
+real  9m14.417s
+user  12m58.750s
+sys 3m43.690s
 ```

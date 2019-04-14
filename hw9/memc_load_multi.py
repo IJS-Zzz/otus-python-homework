@@ -1,17 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import os
-import gzip
-import sys
-import glob
-import logging
-import time
 import collections
-import threading
+import glob
+import gzip
+import itertools
+import logging
 import multiprocessing
+import os
+import sys
+import threading
+import time
 from Queue import Queue
-from multiprocessing.pool import ThreadPool
 from functools import partial
+from multiprocessing.pool import ThreadPool
 from optparse import OptionParser
 # brew install protobuf
 # protoc  --python_out=. ./appsinstalled.proto
@@ -29,7 +30,8 @@ AppsInstalled = collections.namedtuple(
 
 RETRY = 3
 BACKOFF_FACTOR = 0.1
-CHUNKSIZE = 500
+READ_CHUNK_SIZE = 10000
+UPLOAD_CHUNK_SIZE = 1000
 
 NORMAL_ERR_RATE = 0.01
 DEFAULT_PATTERN = "/data/appsinstalled/*.tsv.gz"
@@ -97,6 +99,24 @@ def prototest():
     logging.info("Test Protobuf Done!")
 
 
+class ChunkReaderGenerator(object):
+    def __init__(self, gen, chunk_size=READ_CHUNK_SIZE):
+        self.gen = gen
+        self.chunk_size = chunk_size
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        chunk = list(itertools.islice(self.gen, self.chunk_size))
+        if not chunk:
+            raise StopIteration
+        return chunk
+
+    def next(self):
+        return self.__next__()
+
+
 ############## Application ###############
 
 class MemcacheUploadHandler(threading.Thread):
@@ -150,7 +170,7 @@ class MemcacheUploadHandler(threading.Thread):
             buff_size += 1
             self.queue.task_done()
 
-            if buff_size < CHUNKSIZE:
+            if buff_size < UPLOAD_CHUNK_SIZE:
                 continue
 
             self._set_multi(chunk_buff)
@@ -160,9 +180,15 @@ class MemcacheUploadHandler(threading.Thread):
         self._set_multi(chunk_buff)
 
 
-def file_process_handler(device_memc, fn, fd, options):
-    processed = errors = 0
+def process_handler(options, chunk_lines):
+    device_memc = {
+        "idfa": options.idfa,
+        "gaid": options.gaid,
+        "adid": options.adid,
+        "dvid": options.dvid,
+    }
 
+    processed = errors = 0
     workers = {
         dev_type: MemcacheUploadHandler(
             Queue(),
@@ -175,7 +201,7 @@ def file_process_handler(device_memc, fn, fd, options):
         worker.start()
 
     try:
-        for line in fd:
+        for line in chunk_lines:
             line = line.strip()
             if not line:
                 continue
@@ -193,6 +219,7 @@ def file_process_handler(device_memc, fn, fd, options):
 
             key, value = get_appsinstalled_as_key_value(appsinstalled)
             workers[appsinstalled.dev_type].queue.put((key, value))
+
     except (KeyboardInterrupt, SystemExit):
         for w in workers.values():
             w.terminate()
@@ -209,31 +236,28 @@ def file_process_handler(device_memc, fn, fd, options):
     return processed, errors
 
 
-def process_handler(options, fn):
-    logging.info('%s | Processing %s', multiprocessing.current_process().name, fn)
-    
-    device_memc = {
-        "idfa": options.idfa,
-        "gaid": options.gaid,
-        "adid": options.adid,
-        "dvid": options.dvid,
-    }
-    with gzip.open(fn) as fd:
-        processed, errors = file_process_handler(device_memc, fn, fd, options=options)
-        return fn, processed, errors
-
-
 def main(options):
     pool = multiprocessing.Pool(processes=int(options.workers))
     handler = partial(process_handler, options)
     fnames = sorted(glob.iglob(options.pattern))
 
     try:
-        for fn, processed, errors in pool.imap(handler, fnames):
+        for fn in fnames:
+            processed = errors = 0
+            logging.info('Processing %s' % fn)
+
+            with gzip.open(fn) as fd:
+                file_reader = ChunkReaderGenerator(fd)
+                for proc, err in pool.imap(handler, file_reader):
+                    processed += proc
+                    errors += err
+
             if not processed:
                 dot_rename(fn)
                 continue
+
             err_rate = float(errors) / processed
+
             if err_rate < NORMAL_ERR_RATE:
                 logging.info(
                     "Processing %s done. Acceptable error rate (%s). Successfull load" % (
@@ -243,9 +267,12 @@ def main(options):
                     "Processing %s done. High error rate (%s > %s). Failed load" % (
                         fn, err_rate, NORMAL_ERR_RATE))
             dot_rename(fn)
+
     except (KeyboardInterrupt, SystemExit):
         pool.terminate()
-        pool.join()
+
+    pool.join()
+
 
 if __name__ == '__main__':
     op = OptionParser()
