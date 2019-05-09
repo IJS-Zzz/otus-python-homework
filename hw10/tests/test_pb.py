@@ -9,6 +9,8 @@ MAGIC = 0xFFFFFFFF
 DEVICE_APPS_TYPE = 1
 TEST_FILE = "test.pb.gz"
 
+TEST_EMPTY_FILE = "test_empty_file.pb.gz"
+
 
 class TestPB(unittest.TestCase):
     deviceapps = [
@@ -25,6 +27,8 @@ class TestPB(unittest.TestCase):
     def tearDown(self):
         if os.path.exists(TEST_FILE):
             os.remove(TEST_FILE)
+        if os.path.exists(TEST_EMPTY_FILE):
+            os.remove(TEST_EMPTY_FILE)
 
     # Test Write
     def test_write(self):
@@ -104,10 +108,19 @@ class TestPB(unittest.TestCase):
         with self.assertRaisesRegexp(ValueError, "'app' must be an integer type"):
             pb.deviceapps_xwrite_pb(devapps, TEST_FILE)
 
-    # Test Read Exceptions
+    # Test Read Exceptions and Cases
 
     def test_read_file_file_does_not_exist(self):
         with self.assertRaisesRegexp(IOError, "File does not exist"):
             pb.deviceapps_xread_pb("NotExistFile")
 
+    def test_read_empty_file(self):
+        with open(TEST_EMPTY_FILE, 'wb') as f:
+            res = list(pb.deviceapps_xread_pb(TEST_EMPTY_FILE))
+            self.assertEqual(res, [])
 
+    def test_read_class_and_function_have_same_result(self):
+        pb.deviceapps_xwrite_pb(self.deviceapps, TEST_FILE)
+        res1 = list(pb.deviceapps_xread_pb(TEST_FILE))
+        res2 = list(pb.PBFileIterator(TEST_FILE))
+        self.assertEqual(res1, res2)
