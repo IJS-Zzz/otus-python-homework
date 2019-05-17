@@ -265,7 +265,7 @@ def render_template(template_file_path, report_file_path, data):
         temp_file.write(html_report)
         temp_file.flush()
 
-        # save output file after after completion of write temp file
+        # save output file after completion of write temp file
         os.link(temp_file.name, report_file_path)
 
 
