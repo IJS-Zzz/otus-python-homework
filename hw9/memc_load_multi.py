@@ -28,7 +28,10 @@ AppsInstalled = collections.namedtuple(
     "AppsInstalled", ["dev_type", "dev_id", "lat", "lon", "apps"]
 )
 
+print(os.getpid())
+
 RETRY = 3
+BASE_TIMEOUT = 0.5
 BACKOFF_FACTOR = 0.1
 READ_CHUNK_SIZE = 10000
 UPLOAD_CHUNK_SIZE = 1000
@@ -121,16 +124,21 @@ class ChunkReaderGenerator(object):
 
 class MemcacheUploadHandler(threading.Thread):
 
-    def __init__(self, queue, memc_addr, dry_run=False):
+    def __init__(self, queue, memc_addr,
+                 retry=RETRY, timeout=BASE_TIMEOUT,
+                 backoff=BACKOFF_FACTOR, dry_run=False):
         threading.Thread.__init__(self)
         self.daemon = True
         self.queue = queue
         self.dry = dry_run
         self.memc_addr = memc_addr
-        self.conn = memcache.Client([memc_addr])
+        self.retry = retry
+        self.base_timeout = timeout
+        self.backoff = backoff
+        self.conn = memcache.Client([memc_addr], dead_retry=timeout)
         self.processed = self.errors = 0
 
-    def _set_multi(self, upload_list, retry=RETRY, backoff=BACKOFF_FACTOR):
+    def _set_multi(self, upload_list):
         if self.dry:
             logging.debug("%s | %s: set %s keys" % (multiprocessing.current_process().name,
                                                     self.memc_addr, len(upload_list)))
@@ -141,11 +149,17 @@ class MemcacheUploadHandler(threading.Thread):
         bad_keys = self.conn.set_multi(upload_dict)
 
         attempt = 1
-        delay = lambda x: backoff * (2**x)
+        delay = lambda x: self.base_timeout + self.backoff * (2**x)
 
-        while bad_keys and attempt <= retry:
-            time.sleep(delay(attempt))
-            new_upload_dict = {k: v for k, v in upload_dict.items() if k in bad_keys}
+        while bad_keys and attempt <= self.retry:
+            sleep_time = delay(attempt)
+            logging.debug("%s | %s: Retry %s of %s. Sleep %s" % (multiprocessing.current_process().name,
+                                                                self.memc_addr, attempt,
+                                                                self.retry , sleep_time))
+            time.sleep(sleep_time)
+
+            new_upload_dict = {k: v for k,
+                               v in upload_dict.items() if k in bad_keys}
             bad_keys = self.conn.set_multi(new_upload_dict)
             attempt += 1
 
@@ -153,31 +167,33 @@ class MemcacheUploadHandler(threading.Thread):
             self.processed += len(upload_dict)
             return True
         else:
-            self.processed += len(upload_dict) - len(bad_keys)
+            processed = len(upload_dict) - len(bad_keys)
+            if not processed:
+                logging.warning("Memcached storage isn't available! (%s)" % self.memc_addr)
+            self.processed += processed
             self.errors += len(bad_keys)
             return False
 
     def run(self):
-        chunk_buff = []
+        chunk_size = UPLOAD_CHUNK_SIZE
+        buff = []
         buff_size = 0
         while True:
-            item = self.queue.get(block=True, timeout=None)
-            if item == SENTINEL:
+            items = self.queue.get(block=True, timeout=None)
+            if items == SENTINEL:
                 self.queue.task_done()
                 break
 
-            chunk_buff.append(item)
-            buff_size += 1
+            buff.extend(items)
+            buff_size += len(items)
             self.queue.task_done()
 
-            if buff_size < UPLOAD_CHUNK_SIZE:
-                continue
+            while buff_size >= chunk_size:
+                self._set_multi(buff[:chunk_size])
+                buff = buff[chunk_size:]
+                buff_size -= chunk_size
 
-            self._set_multi(chunk_buff)
-            chunk_buff = []
-            buff_size = 0
-
-        self._set_multi(chunk_buff)
+        self._set_multi(buff)
 
 
 def process_handler(options, chunk_lines):
@@ -193,7 +209,7 @@ def process_handler(options, chunk_lines):
         dev_type: MemcacheUploadHandler(
             Queue(),
             memc_addr,
-            dry_run = options.dry
+            dry_run=options.dry
         )
         for dev_type, memc_addr in device_memc.items()
     }
@@ -201,6 +217,7 @@ def process_handler(options, chunk_lines):
         worker.start()
 
     try:
+        parsed_data = collections.defaultdict(list)
         for line in chunk_lines:
             line = line.strip()
             if not line:
@@ -214,11 +231,15 @@ def process_handler(options, chunk_lines):
             memc_addr = device_memc.get(appsinstalled.dev_type)
             if not memc_addr:
                 errors += 1
-                logging.error("Unknow device type: %s" % appsinstalled.dev_type)
+                logging.error("Unknow device type: %s" %
+                              appsinstalled.dev_type)
                 continue
 
             key, value = get_appsinstalled_as_key_value(appsinstalled)
-            workers[appsinstalled.dev_type].queue.put((key, value))
+            parsed_data[appsinstalled.dev_type].append((key, value))
+
+        for dev_type, data in parsed_data.items():
+            workers[dev_type].queue.put(data)
 
     except (KeyboardInterrupt, SystemExit):
         for w in workers.values():
@@ -271,6 +292,7 @@ def main(options):
     except (KeyboardInterrupt, SystemExit):
         pool.terminate()
 
+    pool.close()
     pool.join()
 
 
