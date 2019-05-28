@@ -83,7 +83,16 @@ func parseArgs() (options Options) {
 	flag.StringVar(&options.adid, "adid", "127.0.0.1:33015", "ip and port of dvid memcached server")
 	flag.StringVar(&options.dvid, "dvid", "127.0.0.1:33016", "ip and port of dvid memcached server")
 
+	// Parse Args
 	flag.Parse()
+
+	// Validate args
+	if options.workers <= 0 {
+		log.Fatalf("E Workers should positive number (value: %v)", options.workers)
+	}
+	if options.buffer <= 0 {
+		log.Fatalf("E Buffer should positive number (value: %v)", options.buffer)
+	}
 	return
 }
 
@@ -93,6 +102,17 @@ func dotRename(path string) {
 	if err != nil {
 		log.Fatalf("E Can't rename a file: %s", path)
 	}
+}
+
+// Remove files with 'dot' prefix from list of found files
+func dotFilter(filesList []string) (newFilesList []string) {
+	for _, path := range filesList {
+		_, fname := filepath.Split(path)
+		if fname[0] != '.' {
+			newFilesList = append(newFilesList, path)
+		}
+	}
+	return
 }
 
 // ##############################
@@ -340,6 +360,7 @@ func main() {
 		// ErrBadPattern
 		log.Fatalln("E Used bad pattern:", err)
 	}
+	files = dotFilter(files)
 	if files == nil {
 		log.Printf("I Could not find files for the given pattern: %s", options.pattern)
 		os.Exit(0)
