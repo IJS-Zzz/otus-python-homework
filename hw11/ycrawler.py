@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-
 import aiohttp
 import argparse
 import asyncio
 import logging
 import os
 from bs4 import BeautifulSoup
-from logging.handlers import RotatingFileHandler
+from concurrent.futures import ThreadPoolExecutor
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlparse
 
@@ -29,6 +28,9 @@ LOG_FILENAME = "ycrawler.log"
 
 WORKERS = 30
 SENTINEL = "STOP"
+THREAD_POOL_EX_SIZE = WORKERS * 10
+REQUEST_TIMEOUT = 60
+SAVE_CHUNK_SIZE = 1024
 
 MAX_RETRIES = 3
 BACKOFF_FACTOR = 0.3
@@ -94,13 +96,18 @@ class Fetcher:
     Class for async fetching data from URLs
     """
 
-    def __init__(self, session,
-                 retry=MAX_RETRIES,
-                 backoff_factor=BACKOFF_FACTOR,
-                 save_chunk_size=1024):
+    def __init__(self,
+                 session: aiohttp.ClientSession,
+                 loop: asyncio.BaseEventLoop=None,
+                 executor: ThreadPoolExecutor=None,
+                 retry: int=MAX_RETRIES,
+                 backoff_factor: float=BACKOFF_FACTOR,
+                 save_chunk_size: int=SAVE_CHUNK_SIZE):
         self.session = session
+        self.loop = loop or asyncio.get_event_loop()
+        self.executor = executor
         self.retry = retry
-        self.backoff_factor = BACKOFF_FACTOR
+        self.backoff_factor = backoff_factor
         self.chunk_size = save_chunk_size
 
     async def _fetch(self, url: str, save_in_file: str='') -> str:
@@ -115,7 +122,7 @@ class Fetcher:
                         return await self._save_response_in_file(response, save_in_file)
                     return await response.text()
 
-            except aiohttp.ClientError as ex:
+            except (aiohttp.ClientError, asyncio.TimeoutError) as ex:
                 if attempt > self.retry:
                     logging.error("Can't fetch url {}. {}: {}".format(
                         url, type(ex).__name__, ex.args))
@@ -138,7 +145,7 @@ class Fetcher:
                 chunk = await response.content.read(self.chunk_size)
                 if not chunk:
                     break
-                temp_file.write(chunk)
+                await self.loop.run_in_executor(self.executor, temp_file.write, chunk)
             temp_file.flush()
 
             # save output file after completion of write temp file
@@ -146,6 +153,7 @@ class Fetcher:
                 os.remove(path)
                 logging.debug("File was rewritten {}".format(path))
             os.link(temp_file.name, path)
+        logging.debug("Download {} complete".format(path))
         return path
 
     async def fetch(self, url: str) -> str:
@@ -156,7 +164,7 @@ class Fetcher:
         """
         return await self._fetch(url)
 
-    async def fetch_and_save_in_file(self, url: str, path: str) -> str:
+    async def fetch_and_save(self, url: str, path: str) -> str:
         """
         Fetch an URL
         and save response in file.
@@ -166,106 +174,12 @@ class Fetcher:
         return await self._fetch(url, save_in_file=path)
 
 
-class PostsHandler:
-
-    def __init__(self, lock, store_dir):
-        self.lock = lock
-        self.store_dir = store_dir
-        self._store_dir_created = False
-
-        self.post_saved = 0
-        self.comment_saved = 0
-        self.ready_posts = set()
-        self.scan_ready_posts()
-
-    async def reset_counters(self):
-        async with self.lock:
-            self.post_saved = 0
-            self.comment_saved = 0
-
-    def create_store_dir(self, post_folder: str=None):
-        """
-        Handler for create directory.
-        """
-        if not self._store_dir_created:
-            os.makedirs(self.store_dir, exist_ok=True)
-            self._store_dir_created = True
-        if post_folder:
-            os.makedirs(os.path.join(self.store_dir,
-                                     post_folder), exist_ok=True)
-
-    def scan_ready_posts(self):
-        """
-        Search already downloaded news posts in content directory.
-        """
-        self.create_store_dir()
-
-        post_ids = set()
-        for subdir_name in os.listdir(self.store_dir):
-            if os.path.isdir(os.path.join(self.store_dir, subdir_name)):
-                try:
-                    post_id = int(subdir_name)
-                except ValueError:
-                    msg = "Wrong subdir name (should be number): {}"
-                    logging.debug(msg.format(subdir_name))
-                    continue
-
-                path_to_file = os.path.join(
-                    self.store_dir,
-                    subdir_name,
-                    POST_FILE_NAME.format(post_id))
-
-                if os.path.isfile(path_to_file):
-                    post_ids.add(post_id)
-
-        self.ready_posts.update(post_ids)
-
-    def get_file_name(self, post_id: int, comment_id: int=None):
-        """
-        Generate filename by id.
-        """
-        base = os.path.join(self.store_dir, str(post_id))
-        if comment_id != None:
-            return os.path.join(base, 'comment_{}.html'.format(str(comment_id)))
-        return os.path.join(base, 'post_{}.html'.format(str(post_id)))
-
-    async def download_post(self,
-                            fetcher: Fetcher,
-                            post_id: int,
-                            link: str):
-        post_folder = str(post_id)
-        self.create_store_dir(post_folder)
-        filename = self.get_file_name(post_id)
-        try:
-            if os.path.exists(filename):
-                os.rename(filename, filename + '.dump')
-            await fetcher.fetch_and_save_in_file(link, filename)
-            self.post_saved += 1
-            self.ready_posts.add(post_id)
-        except aiohttp.ClientError:
-            pass
-
-    async def download_comment(self,
-                               fetcher: Fetcher,
-                               post_id: int,
-                               link: str,
-                               comment_id: int):
-        post_folder = str(post_id)
-        self.create_store_dir(post_folder)
-        filename = self.get_file_name(post_id, comment_id)
-        try:
-            await fetcher.fetch_and_save_in_file(link, filename)
-            self.comment_saved += 1
-        except aiohttp.ClientError:
-            pass
-
-
 ############## Posts Download Worker ###############
 
 async def posts_download_worker(w_id: int,
                                 fetcher: Fetcher,
                                 queue: asyncio.Queue,
-                                posts_handler: PostsHandler):
+                                store_dir: str):
     """
     Function for parse  and download new post.
     """
@@ -275,21 +189,32 @@ async def posts_download_worker(w_id: int,
             queue.task_done()
             logging.warning("Worker {} got SENTINEL - exit.".format(w_id))
             return
-        post_id, url = task
 
+        post_id, url = task
         comments_links = await get_links_from_comments(fetcher, post_id)
 
         logging.debug("Worker {} - found {} links in post {}".format(
             w_id, (1 + len(comments_links)), post_id
         ))
 
-        tasks = [
-            posts_handler.download_comment(fetcher, post_id, link, i)
-            for i, link in enumerate(comments_links)
-        ]
-        tasks.insert(0, posts_handler.download_post(fetcher, post_id, url))
+        post_dir = os.path.join(store_dir, str(post_id))
+        os.makedirs(post_dir, exist_ok=True)
 
-        await asyncio.gather(*tasks)
+        tasks = [
+            post_download_handler(
+                fetcher, _url, post_dir, post_id, comment_id=i)
+            for i, _url in enumerate(comments_links)
+        ]
+        tasks.insert(0, post_download_handler(fetcher, url, post_dir, post_id))
+
+        results = await asyncio.gather(*tasks)
+        post_saved = results[:1]
+        comment_saved = sum(results[1:])
+        if post_saved:
+            logging.info(
+                "Post {} was saved with {} comments".format(post_id, comment_saved))
+        else:
+            logging.warning("Post {} wasn't saved".format(post_id))
         queue.task_done()
 
 
@@ -301,24 +226,55 @@ async def get_links_from_comments(fetcher: Fetcher, post_id: int) -> list:
     links = set()
     try:
         html = await fetcher.fetch(url)
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        logging.warning("No data was received from the url {}".format(url))
+        return list()
 
-        soup = BeautifulSoup(html, "html5lib")
-        for link in soup.select(".comment a[rel=nofollow]"):
-            _url = link.attrs["href"]
-            parsed_url = urlparse(_url)
-            if parsed_url.scheme and parsed_url.netloc:
-                links.add(_url)
-    except aiohttp.ClientError:
+    soup = BeautifulSoup(html, "html5lib")
+    for link in soup.select(".comment a[rel=nofollow]"):
+        _url = link.attrs["href"]
+        parsed_url = urlparse(_url)
+        if parsed_url.scheme and parsed_url.netloc:
+            links.add(_url)
+
+    return list(links)
+
+
+async def post_download_handler(fetcher: Fetcher, url: str, path: str,
+                                post_id: int, comment_id: int=None) -> bool:
+    """
+    Download the data from the url and save it to a file.
+
+    return: download status(bool)
+    """
+    fname = get_file_name(post_id, comment_id)
+    file_path = os.path.join(path, fname)
+    result_file = ''
+    try:
+        result_file = await fetcher.fetch_and_save(url, file_path)
+    except (aiohttp.ClientError, asyncio.TimeoutError):
         pass
-    finally:
-        return list(links)
+
+    if result_file:
+        return True
+    logging.debug("No data was received from the url {}".format(url))
+    return False
+
+
+def get_file_name(post_id: int, comment_id: int=None) -> str:
+    """
+    Generate filename by post id and comment id.
+    """
+    if comment_id != None:
+        return 'comment_{}.html'.format(comment_id)
+    return 'post_{}.html'.format(post_id)
 
 
 ############## New Posts Watcher ###############
 
 async def new_posts_watcher(fetcher: Fetcher,
                             queue: asyncio.Queue,
-                            posts_handler: PostsHandler,
+                            store_dir: str,
                             sleep_time: int,
                             num_workers: int):
     """
@@ -327,10 +283,11 @@ async def new_posts_watcher(fetcher: Fetcher,
     and send tasks of downloads to workers.
     """
     logging.info("Ycrawler started.")
+
     iteration = 1
     while True:
         try:
-            new_posts = await check_new_posts(fetcher, posts_handler)
+            new_posts = await get_new_posts(fetcher, store_dir)
             for post_id, post_url in new_posts.items():
                 await queue.put((post_id, post_url))
         except Exception as ex:
@@ -341,12 +298,6 @@ async def new_posts_watcher(fetcher: Fetcher,
 
         await queue.join()
 
-        logging.info("Saved {} posts, {} links from comments".format(
-            posts_handler.post_saved, posts_handler.comment_saved
-        ))
-
-        await posts_handler.reset_counters()
-
         logging.info("Waiting for {} sec...".format(sleep_time))
         await asyncio.sleep(sleep_time)
         iteration += 1
@@ -354,14 +305,18 @@ async def new_posts_watcher(fetcher: Fetcher,
         logging.info("Run new search iteration ({})".format(iteration))
 
 
-async def check_new_posts(fetcher: Fetcher,
-                          posts_handler: PostsHandler) -> dict:
+async def get_new_posts(fetcher: Fetcher, store_dir: str) -> dict:
     """
-    Function for get not downloaded news posts.
+    Function for searching news posts.
     """
-    page = await fetcher.fetch(Y_ROOT_URL)
+    try:
+        page = await fetcher.fetch(Y_ROOT_URL)
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        logging.info("{} is not available now".format(Y_ROOT_URL))
+        return dict()
+
     posts = get_posts_from_main_page(page)
-    ready_post_ids = posts_handler.ready_posts
+    ready_post_ids = get_processed_posts(store_dir)
 
     not_ready_posts = {}
     for p_id, p_url in posts.items():
@@ -371,6 +326,34 @@ async def check_new_posts(fetcher: Fetcher,
             logging.debug("Post {} already parsed".format(p_id))
 
     return not_ready_posts
+
+
+def get_processed_posts(store_dir: str) -> list:
+    """
+    Search in store_dir already downloaded posts
+    """
+    post_ids = list()
+    if not os.path.isdir(store_dir):
+        return post_ids
+
+    for subdir_name in os.listdir(store_dir):
+        if os.path.isdir(os.path.join(store_dir, subdir_name)):
+            try:
+                post_id = int(subdir_name)
+            except ValueError:
+                msg = "Wrong subdir name (should be number): {}"
+                logging.debug(msg.format(subdir_name))
+                continue
+
+            path_to_file = os.path.join(
+                store_dir,
+                subdir_name,
+                POST_FILE_NAME.format(post_id))
+
+            if os.path.isfile(path_to_file):
+                post_ids.append(post_id)
+
+    return post_ids
 
 
 def get_posts_from_main_page(page: str) -> dict:
@@ -397,53 +380,31 @@ def get_posts_from_main_page(page: str) -> dict:
 
 ############## Main ###############
 
-async def main(loop, args: argparse.Namespace):
-    lock = asyncio.Lock(loop=loop)
-    queue = asyncio.Queue(loop=loop)
-    posts_handler = PostsHandler(lock=lock, store_dir=args.store_dir)
+async def main(args: argparse.Namespace):
+    queue = asyncio.Queue()
     num_workers = WORKERS
 
     async with aiohttp.ClientSession(
-        loop=loop, connector=aiohttp.TCPConnector(ssl=False)
+        connector=aiohttp.TCPConnector(ssl=False),
+        timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
     ) as session:
-        fetcher = Fetcher(session=session)
-        workers = [
-            posts_download_worker(w_id, fetcher, queue, posts_handler)
-            for w_id in range(num_workers)
-        ]
-        workers.append(new_posts_watcher(
-            fetcher, queue, posts_handler, args.period, num_workers))
-        await asyncio.gather(*workers)
+        with ThreadPoolExecutor(max_workers=THREAD_POOL_EX_SIZE) as executor:
+            fetcher = Fetcher(session=session, executor=executor)
+            workers = [
+                posts_download_worker(w_id, fetcher, queue, args.store_dir)
+                for w_id in range(num_workers)
+            ]
+            workers.append(new_posts_watcher(
+                fetcher, queue, args.store_dir, args.period, num_workers))
+            await asyncio.gather(*workers)
 
 
 if __name__ == "__main__":
     args = parse_args()
     setup_logger(args.log, args.log_path, args.verbose)
-    loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(main(loop, args))
+        asyncio.run(main(args))
     except KeyboardInterrupt:
-        print("Attempting graceful shutdown, press Ctrl+C again to exit…")
-
-        # Do not show 'asyncio.CancelledError' exceptions during shutdown
-        def shutdown_exception_handler(loop, context):
-            if "exception" not in context \
-                    or not isinstance(context["exception"], asyncio.CancelledError):
-                loop.default_exception_handler(context)
-        loop.set_exception_handler(shutdown_exception_handler)
-
-        # Handle shutdown gracefully by waiting for all tasks to be cancelled
-        tasks = asyncio.gather(
-            *asyncio.Task.all_tasks(loop=loop), loop=loop, return_exceptions=True)
-        tasks.add_done_callback(lambda t: loop.stop())
-        tasks.cancel()
-
-        # Keep the event loop running until it is either destroyed or all
-        # tasks have really terminated
-        while not tasks.done() and not loop.is_closed():
-            loop.run_forever()
+        logging.info("Termination…")
     except Exception as ex:
         logging.exception(ex)
-    finally:
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
